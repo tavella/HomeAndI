@@ -1,0 +1,144 @@
+package com.example.lmstudioclient.data
+
+import com.example.lmstudioclient.data.remote.*
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.runTest
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
+import org.junit.After
+import org.junit.Assert.*
+import org.junit.Before
+import org.junit.Test
+import retrofit2.Retrofit
+import retrofit2.converter.gson.GsonConverterFactory
+
+@OptIn(ExperimentalCoroutinesApi::class)
+class LMStudioApiServiceTest {
+
+    private lateinit var mockWebServer: MockWebServer
+    private lateinit var apiService: LMStudioApiService
+
+    @Before
+    fun setUp() {
+        mockWebServer = MockWebServer()
+        mockWebServer.start()
+
+        apiService = Retrofit.Builder()
+            .baseUrl(mockWebServer.url("/"))
+            .addConverterFactory(GsonConverterFactory.create())
+            .build()
+            .create(LMStudioApiService::class.java)
+    }
+
+    @After
+    fun tearDown() {
+        mockWebServer.shutdown()
+    }
+
+    @Test
+    fun `createChatCompletion sends correct OpenAI JSON request to v1-chat-completions`() = runTest {
+        val jsonResponse = """
+            {
+              "id": "chatcmpl-123",
+              "created": 1677652288,
+              "model": "meta-llama-3-8b-instruct",
+              "choices": [{
+                "index": 0,
+                "message": {
+                  "role": "assistant",
+                  "content": "Hello! How can I assist you today?"
+                },
+                "finish_reason": "stop"
+              }],
+              "usage": {
+                "prompt_tokens": 9,
+                "completion_tokens": 12,
+                "total_tokens": 21
+              }
+            }
+        """.trimIndent()
+
+        mockWebServer.enqueue(MockResponse().setResponseCode(200).setBody(jsonResponse))
+
+        val requestPayload = ChatCompletionRequest(
+            model = "meta-llama-3-8b-instruct",
+            messages = listOf(
+                ApiMessage(role = "system", content = "You are a helpful assistant."),
+                ApiMessage(role = "user", content = "Hello")
+            ),
+            temperature = 0.7
+        )
+
+        val response = apiService.createChatCompletion(requestPayload)
+
+        // Verify request line and path
+        val recordedRequest = mockWebServer.takeRequest()
+        assertEquals("POST", recordedRequest.method)
+        assertEquals("/v1/chat/completions", recordedRequest.path)
+
+        // Verify JSON body payload sent to server
+        val bodyText = recordedRequest.body.readUtf8()
+        assertTrue(bodyText.contains("meta-llama-3-8b-instruct"))
+        assertTrue(bodyText.contains("You are a helpful assistant."))
+        assertTrue(bodyText.contains("\"role\":\"user\""))
+
+        // Verify response parsing
+        assertTrue(response.isSuccessful)
+        assertNotNull(response.body())
+        val choice = response.body()!!.choices?.first()
+        assertEquals("assistant", choice?.message?.role)
+        assertEquals("Hello! How can I assist you today?", choice?.message?.content)
+    }
+
+    @Test
+    fun `createChatCompletion supports multimodal vision payload structure`() = runTest {
+        mockWebServer.enqueue(MockResponse().setResponseCode(200).setBody("{}"))
+
+        val multimodalParts = listOf(
+            TextContentPart(text = "What is in this image?"),
+            ImageUrlContentPart(imageUrl = ImageUrlDetail(url = "data:image/jpeg;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="))
+        )
+
+        val requestPayload = ChatCompletionRequest(
+            model = "llava-v1.6-7b",
+            messages = listOf(
+                ApiMessage(role = "user", content = multimodalParts)
+            )
+        )
+
+        apiService.createChatCompletion(requestPayload)
+
+        val recordedRequest = mockWebServer.takeRequest()
+        val bodyText = recordedRequest.body.readUtf8()
+
+        assertTrue(bodyText.contains("\"type\":\"text\""))
+        assertTrue(bodyText.contains("\"type\":\"image_url\""))
+        assertTrue(bodyText.contains("data:image/jpeg;base64,"))
+    }
+
+    @Test
+    fun `getModels parses v1-models endpoint correctly for connection test`() = runTest {
+        val modelsJson = """
+            {
+              "data": [
+                { "id": "meta-llama-3-8b-instruct", "owned_by": "organization-owner" },
+                { "id": "qwen2.5-coder-7b-instruct", "owned_by": "organization-owner" }
+              ]
+            }
+        """.trimIndent()
+
+        mockWebServer.enqueue(MockResponse().setResponseCode(200).setBody(modelsJson))
+
+        val response = apiService.getModels()
+
+        val recordedRequest = mockWebServer.takeRequest()
+        assertEquals("GET", recordedRequest.method)
+        assertEquals("/v1/models", recordedRequest.path)
+
+        assertTrue(response.isSuccessful)
+        val models = response.body()?.data
+        assertNotNull(models)
+        assertEquals(2, models!!.size)
+        assertEquals("meta-llama-3-8b-instruct", models[0].id)
+    }
+}

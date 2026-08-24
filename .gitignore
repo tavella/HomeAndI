@@ -1,0 +1,33 @@
+# Built objects
+bin/
+gen/
+app/build/
+build/
+
+# Gradle
+.gradle/
+build/
+local.properties
+.artifacts/
+
+# Android Studio / IntelliJ
+.idea/
+*.iml
+*.iws
+*.ipr
+out/
+
+# Log files
+*.log
+
+# Keystore
+*.jks
+*.keystore
+
+# Captured Screenshots / Artifacts
+.artifacts/
+capture/
+
+# OS files
+.DS_Store
+Thumbs.db
