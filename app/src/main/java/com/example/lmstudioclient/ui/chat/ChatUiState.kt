@@ -2,6 +2,7 @@ package com.example.lmstudioclient.ui.chat
 
 import com.example.lmstudioclient.data.local.ChatMessageEntity
 import com.example.lmstudioclient.data.local.ChatSessionEntity
+import com.example.lmstudioclient.data.remote.ModelData
 
 sealed interface ChatUiState {
     object Idle : ChatUiState
@@ -17,5 +18,6 @@ data class ChatScreenState(
     val isGenerating: Boolean = false,
     val errorMessage: String? = null,
     val pendingAttachments: List<String> = emptyList(),
-    val viewingAttachment: String? = null
+    val viewingAttachment: String? = null,
+    val loadedModels: List<ModelData> = emptyList()
 )

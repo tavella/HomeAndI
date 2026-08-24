@@ -121,4 +121,26 @@ class ChatRepositoryTest {
         // Verify status update in Room
         coVerify { chatMessageDao.updateMessageStatus(any(), eq("ERROR")) }
     }
+
+    @Test
+    fun `loadModel calls apiService with correct request`() = runTest {
+        val modelId = "test-model"
+        coEvery { apiService.loadModel(any()) } returns Response.success(Unit)
+
+        val result = repository.loadModel(modelId)
+
+        assertTrue(result is NetworkResult.Success)
+        coVerify { apiService.loadModel(ModelLoadRequest(modelId)) }
+    }
+
+    @Test
+    fun `unloadModel calls apiService with correct request`() = runTest {
+        val instanceId = "test-instance"
+        coEvery { apiService.unloadModel(any()) } returns Response.success(Unit)
+
+        val result = repository.unloadModel(instanceId)
+
+        assertTrue(result is NetworkResult.Success)
+        coVerify { apiService.unloadModel(ModelUnloadRequest(instanceId)) }
+    }
 }

@@ -55,8 +55,11 @@ class SettingsViewModelTest {
     }
 
     @Test
-    fun `testConnection updates connectionState to Connected on success`() = runTest {
-        val mockModels = listOf(ModelData("llama-3-8b"), ModelData("qwen-7b"))
+    fun `testConnection updates connectionState and selects first loaded model`() = runTest {
+        val loadedModel = ModelData("llama-3-8b", loadedInstances = listOf(mockk()))
+        val idleModel = ModelData("qwen-7b")
+        val mockModels = listOf(idleModel, loadedModel)
+        
         coEvery { repository.testConnection() } returns NetworkResult.Success(mockModels)
 
         viewModel.testConnection()
@@ -65,7 +68,8 @@ class SettingsViewModelTest {
         val state = viewModel.uiState.value
         assertTrue(state.connectionState is ConnectionState.Connected)
         assertEquals(2, (state.connectionState as ConnectionState.Connected).modelCount)
-        assertEquals(listOf("llama-3-8b", "qwen-7b"), state.availableModels)
+        assertEquals(mockModels, state.availableModels)
+        assertEquals("llama-3-8b", state.modelName) // Should pick the loaded one
 
         verify { preferencesManager.updateServerConfig("192.168.1.100", 1234, "local-model", "Test System Prompt") }
     }
@@ -92,5 +96,43 @@ class SettingsViewModelTest {
 
         verify { preferencesManager.updateServerConfig("10.0.0.5", 8080, "gemma-2-9b", "Test System Prompt") }
         assertNotNull(viewModel.uiState.value.saveMessage)
+    }
+
+    @Test
+    fun `loadModel calls repository and updates state on success`() = runTest {
+        val modelId = "test-model"
+        coEvery { repository.loadModel(modelId) } returns NetworkResult.Success(Unit)
+        coEvery { repository.testConnection() } returns NetworkResult.Success(emptyList())
+
+        viewModel.loadModel(modelId)
+        
+        assertTrue(viewModel.uiState.value.isModelActionLoading)
+        assertEquals("Now loading test-model...", viewModel.uiState.value.modelActionMessage)
+        testDispatcher.scheduler.advanceUntilIdle()
+        
+        assertFalse(viewModel.uiState.value.isModelActionLoading)
+        assertNull(viewModel.uiState.value.modelActionMessage)
+        assertTrue(viewModel.uiState.value.saveMessage?.contains("successfully") == true)
+        coVerify { repository.loadModel(modelId) }
+        coVerify { repository.testConnection() } // Verify it refreshes the list
+    }
+
+    @Test
+    fun `unloadModel calls repository and updates state on success`() = runTest {
+        val modelId = "test-model"
+        coEvery { repository.unloadModel(modelId) } returns NetworkResult.Success(Unit)
+        coEvery { repository.testConnection() } returns NetworkResult.Success(emptyList())
+
+        viewModel.unloadModel(modelId)
+        
+        assertTrue(viewModel.uiState.value.isModelActionLoading)
+        assertEquals("Unloading test-model...", viewModel.uiState.value.modelActionMessage)
+        testDispatcher.scheduler.advanceUntilIdle()
+        
+        assertFalse(viewModel.uiState.value.isModelActionLoading)
+        assertNull(viewModel.uiState.value.modelActionMessage)
+        assertTrue(viewModel.uiState.value.saveMessage?.contains("successfully") == true)
+        coVerify { repository.unloadModel(modelId) }
+        coVerify { repository.testConnection() } // Verify it refreshes the list
     }
 }

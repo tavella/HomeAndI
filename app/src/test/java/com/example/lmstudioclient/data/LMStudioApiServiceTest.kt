@@ -117,12 +117,12 @@ class LMStudioApiServiceTest {
     }
 
     @Test
-    fun `getModels parses v1-models endpoint correctly for connection test`() = runTest {
+    fun `getModels parses api-v1-models endpoint correctly for connection test`() = runTest {
         val modelsJson = """
             {
-              "data": [
-                { "id": "meta-llama-3-8b-instruct", "owned_by": "organization-owner" },
-                { "id": "qwen2.5-coder-7b-instruct", "owned_by": "organization-owner" }
+              "models": [
+                { "key": "meta-llama-3-8b-instruct", "display_name": "Llama 3" },
+                { "key": "qwen2.5-coder-7b-instruct", "display_name": "Qwen 2.5" }
               ]
             }
         """.trimIndent()
@@ -133,12 +133,42 @@ class LMStudioApiServiceTest {
 
         val recordedRequest = mockWebServer.takeRequest()
         assertEquals("GET", recordedRequest.method)
-        assertEquals("/v1/models", recordedRequest.path)
+        assertEquals("/api/v1/models", recordedRequest.path)
 
         assertTrue(response.isSuccessful)
-        val models = response.body()?.data
+        val models = response.body()?.models
         assertNotNull(models)
         assertEquals(2, models!!.size)
         assertEquals("meta-llama-3-8b-instruct", models[0].id)
+    }
+
+    @Test
+    fun `loadModel sends POST request to api-v1-models-load with correct body`() = runTest {
+        mockWebServer.enqueue(MockResponse().setResponseCode(200).setBody("{}"))
+
+        val modelId = "test-model-123"
+        apiService.loadModel(ModelLoadRequest(modelId))
+
+        val recordedRequest = mockWebServer.takeRequest()
+        assertEquals("POST", recordedRequest.method)
+        assertEquals("/api/v1/models/load", recordedRequest.path)
+        
+        val bodyText = recordedRequest.body.readUtf8()
+        assertTrue(bodyText.contains("\"model\":\"$modelId\""))
+    }
+
+    @Test
+    fun `unloadModel sends POST request to api-v1-models-unload with correct body`() = runTest {
+        mockWebServer.enqueue(MockResponse().setResponseCode(200).setBody("{}"))
+
+        val instanceId = "test-instance-456"
+        apiService.unloadModel(ModelUnloadRequest(instanceId))
+
+        val recordedRequest = mockWebServer.takeRequest()
+        assertEquals("POST", recordedRequest.method)
+        assertEquals("/api/v1/models/unload", recordedRequest.path)
+        
+        val bodyText = recordedRequest.body.readUtf8()
+        assertTrue(bodyText.contains("\"instance_id\":\"$instanceId\""))
     }
 }

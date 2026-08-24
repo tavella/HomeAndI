@@ -52,6 +52,10 @@ class ChatRepository(
         }
     }
 
+    suspend fun updateSession(session: ChatSessionEntity) = withContext(Dispatchers.IO) {
+        chatSessionDao.updateSession(session)
+    }
+
     /**
      * Core Conversation Continuity logic:
      * 1. Persists user prompt message into Room.
@@ -167,13 +171,39 @@ class ChatRepository(
         try {
             val response = apiService.getModels()
             if (response.isSuccessful && response.body() != null) {
-                val models = response.body()?.data ?: emptyList()
+                val models = response.body()?.models ?: emptyList()
                 NetworkResult.Success(models)
             } else {
                 NetworkResult.Error("Server returned code ${response.code()}")
             }
         } catch (e: Exception) {
             NetworkResult.Error("Failed to reach server: ${e.localizedMessage ?: "Host unreachable"}", e)
+        }
+    }
+
+    suspend fun loadModel(modelId: String): NetworkResult<Unit> = withContext(Dispatchers.IO) {
+        try {
+            val response = apiService.loadModel(ModelLoadRequest(modelId))
+            if (response.isSuccessful) {
+                NetworkResult.Success(Unit)
+            } else {
+                NetworkResult.Error("Failed to load model: ${response.code()}")
+            }
+        } catch (e: Exception) {
+            NetworkResult.Error("Error loading model: ${e.localizedMessage}")
+        }
+    }
+
+    suspend fun unloadModel(instanceId: String): NetworkResult<Unit> = withContext(Dispatchers.IO) {
+        try {
+            val response = apiService.unloadModel(ModelUnloadRequest(instanceId))
+            if (response.isSuccessful) {
+                NetworkResult.Success(Unit)
+            } else {
+                NetworkResult.Error("Failed to unload model: ${response.code()}")
+            }
+        } catch (e: Exception) {
+            NetworkResult.Error("Error unloading model: ${e.localizedMessage}")
         }
     }
 

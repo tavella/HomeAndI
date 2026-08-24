@@ -9,6 +9,7 @@ import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import com.example.lmstudioclient.data.local.ChatSessionEntity
 import com.example.lmstudioclient.data.preferences.ServerPreferencesManager
+import com.example.lmstudioclient.data.remote.ModelData
 import com.example.lmstudioclient.data.repository.ChatRepository
 import com.example.lmstudioclient.data.worker.ChatWorker
 import com.example.lmstudioclient.util.NetworkResult
@@ -33,6 +34,7 @@ class ChatViewModel(
 
     init {
         observeSessions()
+        fetchLoadedModels()
     }
 
     private fun observeSessions() {
@@ -122,12 +124,38 @@ class ChatViewModel(
         }
     }
 
-    fun createNewSession(title: String = "New Chat") {
+    fun fetchLoadedModels() {
         viewModelScope.launch {
-            val newSession = repository.createNewSession(title = title)
+            val result = repository.testConnection()
+            if (result is NetworkResult.Success) {
+                _uiState.update { it.copy(loadedModels = result.data.filter { m -> m.isLoaded }) }
+            }
+        }
+    }
+
+    fun createNewSession(title: String = "New Chat", modelId: String? = null) {
+        viewModelScope.launch {
+            val model = modelId ?: preferencesManager.getModelSync()
+            val newSession = repository.createNewSession(title = title, modelName = model)
             pendingActiveSessionId = newSession.id
             _uiState.update { it.copy(activeSession = newSession, errorMessage = null) }
             observeMessagesForSession(newSession.id)
+        }
+    }
+
+    fun updateSessionModel(sessionId: String, modelId: String) {
+        viewModelScope.launch {
+            val session = _uiState.value.sessions.find { it.id == sessionId } ?: return@launch
+            val updatedSession = session.copy(modelName = modelId)
+            repository.updateSession(updatedSession)
+            
+            _uiState.update { state ->
+                val updatedList = state.sessions.map { if (it.id == sessionId) updatedSession else it }
+                state.copy(
+                    sessions = updatedList,
+                    activeSession = if (state.activeSession?.id == sessionId) updatedSession else state.activeSession
+                )
+            }
         }
     }
 

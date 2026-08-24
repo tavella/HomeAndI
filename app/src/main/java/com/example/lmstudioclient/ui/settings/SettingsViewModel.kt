@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.lmstudioclient.data.preferences.ServerPreferencesManager
+import com.example.lmstudioclient.data.remote.ModelData
 import com.example.lmstudioclient.data.repository.ChatRepository
 import com.example.lmstudioclient.ui.components.ConnectionState
 import com.example.lmstudioclient.util.NetworkResult
@@ -20,8 +21,10 @@ data class SettingsUiState(
     val systemPrompt: String = ServerPreferencesManager.DEFAULT_SYSTEM_PROMPT,
     val isDarkMode: Boolean? = null, // null means follow system
     val connectionState: ConnectionState = ConnectionState.Idle,
-    val availableModels: List<String> = emptyList(),
-    val saveMessage: String? = null
+    val availableModels: List<ModelData> = emptyList(),
+    val saveMessage: String? = null,
+    val isModelActionLoading: Boolean = false,
+    val modelActionMessage: String? = null
 )
 
 class SettingsViewModel(
@@ -93,14 +96,17 @@ class SettingsViewModel(
         viewModelScope.launch {
             when (val result = repository.testConnection()) {
                 is NetworkResult.Success -> {
-                    val modelList = result.data.map { it.id }
+                    val modelList = result.data
+                    val firstLoadedModel = modelList.find { it.isLoaded }?.id
+                    
                     _uiState.update {
                         it.copy(
                             connectionState = ConnectionState.Connected(modelCount = modelList.size),
                             availableModels = modelList,
-                            modelName = if (modelList.isNotEmpty() && (it.modelName.isBlank() || it.modelName == ServerPreferencesManager.DEFAULT_MODEL)) {
-                                modelList.first()
-                            } else it.modelName
+                            modelName = if (firstLoadedModel != null && (it.modelName.isBlank() || it.modelName == ServerPreferencesManager.DEFAULT_MODEL)) {
+                                firstLoadedModel
+                            } else it.modelName,
+                            isModelActionLoading = false
                         )
                     }
                 }
@@ -113,6 +119,46 @@ class SettingsViewModel(
                 }
                 is NetworkResult.Loading -> {
                     _uiState.update { it.copy(connectionState = ConnectionState.Testing) }
+                }
+            }
+        }
+    }
+
+    fun loadModel(modelId: String) {
+        val model = _uiState.value.availableModels.find { it.id == modelId }
+        val displayName = model?.displayName ?: modelId
+        _uiState.update { it.copy(isModelActionLoading = true, modelActionMessage = "Now loading $displayName...") }
+        viewModelScope.launch {
+            when (val result = repository.loadModel(modelId)) {
+                is NetworkResult.Success -> {
+                    _uiState.update { it.copy(saveMessage = "Model loaded successfully!", modelActionMessage = null) }
+                    fetchModels()
+                }
+                is NetworkResult.Error -> {
+                    _uiState.update { it.copy(saveMessage = "Error loading model: ${result.message}", isModelActionLoading = false, modelActionMessage = null) }
+                }
+                else -> {
+                    _uiState.update { it.copy(isModelActionLoading = false, modelActionMessage = null) }
+                }
+            }
+        }
+    }
+
+    fun unloadModel(modelId: String) {
+        val model = _uiState.value.availableModels.find { it.id == modelId || it.loadedInstances?.any { inst -> inst.id == modelId } == true }
+        val displayName = model?.displayName ?: modelId
+        _uiState.update { it.copy(isModelActionLoading = true, modelActionMessage = "Unloading $displayName...") }
+        viewModelScope.launch {
+            when (val result = repository.unloadModel(modelId)) {
+                is NetworkResult.Success -> {
+                    _uiState.update { it.copy(saveMessage = "Model unloaded successfully!", modelActionMessage = null) }
+                    fetchModels()
+                }
+                is NetworkResult.Error -> {
+                    _uiState.update { it.copy(saveMessage = "Error unloading model: ${result.message}", isModelActionLoading = false, modelActionMessage = null) }
+                }
+                else -> {
+                    _uiState.update { it.copy(isModelActionLoading = false, modelActionMessage = null) }
                 }
             }
         }

@@ -43,6 +43,7 @@ import java.io.File
 import java.util.UUID
 import coil.compose.AsyncImage
 import com.example.lmstudioclient.ui.components.AttachmentViewer
+import com.example.lmstudioclient.data.remote.ModelData
 import androidx.compose.ui.graphics.Color
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.launch
@@ -63,6 +64,8 @@ fun ChatScreen(
 
     var inputTextFieldValue by remember { mutableStateOf(TextFieldValue("")) }
     var showAttachmentDialog by remember { mutableStateOf(false) }
+    var showNewSessionModelDialog by remember { mutableStateOf(false) }
+    var showSwitchModelDialog by remember { mutableStateOf(false) }
 
     // Scroll direction tracking
     var previousIndex by remember { mutableStateOf(listState.firstVisibleItemIndex) }
@@ -192,11 +195,26 @@ fun ChatScreen(
                                 maxLines = 1,
                                 style = MaterialTheme.typography.titleLarge
                             )
-                            Text(
-                                text = "Model: ${state.activeSession?.modelName ?: "Default"}",
-                                fontSize = 11.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            Row(
+                                modifier = Modifier.clickable { 
+                                    viewModel.fetchLoadedModels()
+                                    showSwitchModelDialog = true 
+                                },
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "Model: ${state.activeSession?.modelName ?: "Default"}",
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                Icon(
+                                    Icons.Rounded.SwapHoriz,
+                                    contentDescription = "Switch Model",
+                                    modifier = Modifier.size(12.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
                     },
                     navigationIcon = {
@@ -205,7 +223,10 @@ fun ChatScreen(
                         }
                     },
                     actions = {
-                        IconButton(onClick = { viewModel.createNewSession() }) {
+                        IconButton(onClick = { 
+                            viewModel.fetchLoadedModels()
+                            showNewSessionModelDialog = true 
+                        }) {
                             Icon(imageVector = Icons.Rounded.Add, contentDescription = "New Session")
                         }
                         IconButton(onClick = onOpenSettings) {
@@ -509,4 +530,72 @@ fun ChatScreen(
             onDismiss = { viewModel.closeAttachment() }
         )
     }
+
+    // New Session Model Selection Dialog
+    if (showNewSessionModelDialog) {
+        ModelSelectionDialog(
+            title = "Start New Chat",
+            loadedModels = state.loadedModels,
+            onModelSelected = { modelId ->
+                viewModel.createNewSession(modelId = modelId)
+                showNewSessionModelDialog = false
+            },
+            onDismiss = { showNewSessionModelDialog = false }
+        )
+    }
+
+    // Mid-Conversation Model Switch Dialog
+    if (showSwitchModelDialog) {
+        ModelSelectionDialog(
+            title = "Switch Model for this Chat",
+            loadedModels = state.loadedModels,
+            onModelSelected = { modelId ->
+                state.activeSession?.id?.let { sessionId ->
+                    viewModel.updateSessionModel(sessionId, modelId)
+                }
+                showSwitchModelDialog = false
+            },
+            onDismiss = { showSwitchModelDialog = false }
+        )
+    }
+}
+
+@Composable
+fun ModelSelectionDialog(
+    title: String,
+    loadedModels: List<ModelData>,
+    onModelSelected: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            if (loadedModels.isEmpty()) {
+                Text("No models are currently loaded in RAM. Please go to Settings to load a model first.")
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 300.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(loadedModels, key = { it.id }) { model ->
+                        Card(
+                            onClick = { onModelSelected(model.id) },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                        ) {
+                            Column(Modifier.padding(12.dp)) {
+                                Text(model.displayName ?: model.id, style = MaterialTheme.typography.bodyLarge)
+                                Text(model.id, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
 }

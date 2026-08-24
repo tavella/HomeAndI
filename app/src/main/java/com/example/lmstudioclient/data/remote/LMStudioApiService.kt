@@ -12,6 +12,16 @@ interface LMStudioApiService {
         @Body request: ChatCompletionRequest
     ): Response<ChatCompletionResponse>
 
-    @GET("v1/models")
+    @GET("api/v1/models")
     suspend fun getModels(): Response<ModelListResponse>
+
+    @POST("api/v1/models/load")
+    suspend fun loadModel(
+        @Body request: ModelLoadRequest
+    ): Response<Unit>
+
+    @POST("api/v1/models/unload")
+    suspend fun unloadModel(
+        @Body request: ModelUnloadRequest
+    ): Response<Unit>
 }

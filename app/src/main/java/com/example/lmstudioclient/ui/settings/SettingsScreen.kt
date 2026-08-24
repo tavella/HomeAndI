@@ -225,27 +225,95 @@ fun SettingsScreen(
                     singleLine = true
                 )
 
-                if (state.availableModels.isNotEmpty()) {
+                if (state.availableModels.any { it.isLoaded }) {
                     ExposedDropdownMenu(
                         expanded = expanded,
                         onDismissRequest = { expanded = false }
                     ) {
-                        state.availableModels.forEach { modelId ->
+                        state.availableModels.filter { it.isLoaded }.forEach { model ->
                             DropdownMenuItem(
                                 text = { 
                                     Column {
-                                        Text(modelId, style = MaterialTheme.typography.bodyLarge)
-                                        if (modelId == state.modelName) {
+                                        Text(model.displayName ?: model.id, style = MaterialTheme.typography.bodyLarge)
+                                        if (model.id == state.modelName) {
                                             Text("Currently Selected", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
                                         }
                                     }
                                 },
                                 onClick = {
-                                    viewModel.updateModelName(modelId)
+                                    viewModel.updateModelName(model.id)
                                     expanded = false
                                 },
                                 contentPadding = ExposedDropdownMenuDefaults.ItemContentPadding
                             )
+                        }
+                    }
+                }
+            }
+
+            // Server Model Management
+            if (state.availableModels.isNotEmpty()) {
+                Text(text = "Server Model Management", style = MaterialTheme.typography.titleMedium)
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        // Header
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text("Model ID", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(2f))
+                            Text("Status", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
+                            Text("Action", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1.5f))
+                        }
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+                        state.availableModels.forEach { model ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = model.displayName ?: model.id,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    modifier = Modifier.weight(2f),
+                                    maxLines = 1
+                                )
+                                
+                                val isLoaded = model.isLoaded
+                                Text(
+                                    text = if (isLoaded) "LOADED" else "Idle",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (isLoaded) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+                                    modifier = Modifier.weight(1f)
+                                )
+
+                                Box(modifier = Modifier.weight(1.5f)) {
+                                    if (isLoaded) {
+                                        val instanceId = model.loadedInstances?.firstOrNull()?.id ?: model.id
+                                        TextButton(
+                                            onClick = { viewModel.unloadModel(instanceId) },
+                                            contentPadding = PaddingValues(0.dp),
+                                            enabled = !state.isModelActionLoading
+                                        ) {
+                                            Text("Unload", color = MaterialTheme.colorScheme.error)
+                                        }
+                                    } else {
+                                        TextButton(
+                                            onClick = { viewModel.loadModel(model.id) },
+                                            contentPadding = PaddingValues(0.dp),
+                                            enabled = !state.isModelActionLoading
+                                        ) {
+                                            Text("Load")
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -302,6 +370,35 @@ fun SettingsScreen(
                 Icon(imageVector = Icons.Rounded.Save, contentDescription = null)
                 Spacer(modifier = Modifier.width(8.dp))
                 Text("Save Server Configuration")
+            }
+        }
+    }
+
+    // Model Action Progress Modal
+    if (state.isModelActionLoading) {
+        androidx.compose.ui.window.Dialog(
+            onDismissRequest = { }, // Prevent dismissal during critical model actions
+            properties = androidx.compose.ui.window.DialogProperties(
+                dismissOnBackPress = false,
+                dismissOnClickOutside = false
+            )
+        ) {
+            Surface(
+                shape = MaterialTheme.shapes.medium,
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 8.dp
+            ) {
+                Column(
+                    modifier = Modifier.padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    CircularProgressIndicator()
+                    Text(
+                        text = state.modelActionMessage ?: "Processing...",
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                }
             }
         }
     }

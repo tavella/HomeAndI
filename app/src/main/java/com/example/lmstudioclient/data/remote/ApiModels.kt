@@ -74,10 +74,31 @@ data class Usage(
  * Model Discovery / Ping Response Payload
  */
 data class ModelListResponse(
-    @SerializedName("data") val data: List<ModelData>?
+    @SerializedName("models") val models: List<ModelData>?
 )
 
 data class ModelData(
+    @SerializedName("key") val id: String,
+    @SerializedName("display_name") val displayName: String? = null,
+    @SerializedName("format") val format: String? = null,
+    @SerializedName("architecture") val architecture: String? = null,
+    @SerializedName("size_bytes") val sizeBytes: Long? = null,
+    @SerializedName("max_context_length") val maxContextLength: Int? = null,
+    @SerializedName("loaded_instances") val loadedInstances: List<LoadedInstance>? = null
+) {
+    val isLoaded: Boolean
+        get() = !loadedInstances.isNullOrEmpty()
+}
+
+data class LoadedInstance(
     @SerializedName("id") val id: String,
-    @SerializedName("owned_by") val ownedBy: String? = null
+    @SerializedName("config") val config: Map<String, Any>? = null
+)
+
+data class ModelLoadRequest(
+    @SerializedName("model") val model: String
+)
+
+data class ModelUnloadRequest(
+    @SerializedName("instance_id") val instanceId: String
 )
