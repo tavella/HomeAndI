@@ -30,7 +30,7 @@ class ChatRepositoryTest {
     @Before
     fun setUp() {
         every { preferencesManager.getModelSync() } returns "meta-llama-3-8b"
-        every { preferencesManager.getSystemPromptSync() } returns "You are a helpful assistant."
+        every { preferencesManager.getSystemPromptSync(any()) } returns "You are a helpful assistant."
 
         repository = ChatRepository(
             chatSessionDao = chatSessionDao,
@@ -134,6 +134,38 @@ class ChatRepositoryTest {
     }
 
     @Test
+    fun `loadModel returns user-friendly memory error message on resource exhaustion JSON response`() = runTest {
+        val modelId = "test-huge-model"
+        val errorJson = "{\"error\": {\"message\": \"failed to allocate 8.5 GB of VRAM. Only 2.1 GB free.\", \"code\": \"out_of_memory\"}}"
+        coEvery { apiService.loadModel(any()) } returns Response.error(
+            500,
+            okhttp3.ResponseBody.create(null, errorJson)
+        )
+
+        val result = repository.loadModel(modelId)
+
+        assertTrue(result is NetworkResult.Error)
+        val errMsg = (result as NetworkResult.Error).message
+        assertTrue(errMsg.contains("Not enough resources to load the model"))
+        assertTrue(errMsg.contains("VRAM or RAM"))
+    }
+
+    @Test
+    fun `loadModel returns user-friendly memory error message on plain text resource error`() = runTest {
+        val modelId = "test-huge-model"
+        coEvery { apiService.loadModel(any()) } returns Response.error(
+            500,
+            okhttp3.ResponseBody.create(null, "OOM allocation failed on GPU")
+        )
+
+        val result = repository.loadModel(modelId)
+
+        assertTrue(result is NetworkResult.Error)
+        val errMsg = (result as NetworkResult.Error).message
+        assertTrue(errMsg.contains("Not enough resources to load the model"))
+    }
+
+    @Test
     fun `unloadModel calls apiService with correct request`() = runTest {
         val instanceId = "test-instance"
         coEvery { apiService.unloadModel(any()) } returns Response.success(Unit)
@@ -142,5 +174,42 @@ class ChatRepositoryTest {
 
         assertTrue(result is NetworkResult.Success)
         coVerify { apiService.unloadModel(ModelUnloadRequest(instanceId)) }
+    }
+
+    @Test
+    fun `sendMessage uses session-specific model to retrieve system prompt and model name`() = runTest {
+        val sessionId = "session-456"
+        val sessionModel = "custom-llm-model"
+        val sessionPrompt = "You are a specialized math helper agent."
+        
+        val existingSession = ChatSessionEntity(id = sessionId, title = "Math Chat", modelName = sessionModel)
+        coEvery { chatSessionDao.getSessionById(sessionId) } returns existingSession
+        val userMsg = ChatMessageEntity(id = "msg-456", sessionId = sessionId, role = "user", content = "2+2")
+        coEvery { chatMessageDao.getMessagesForSessionSync(sessionId) } returns listOf(userMsg)
+        every { preferencesManager.getSystemPromptSync(sessionModel) } returns sessionPrompt
+
+        val requestSlot = slot<ChatCompletionRequest>()
+        val mockApiResponse = ChatCompletionResponse(
+            id = "resp-2",
+            created = 2000L,
+            model = sessionModel,
+            choices = listOf(
+                Choice(index = 0, message = ResponseMessage(role = "assistant", content = "4"), finishReason = "stop")
+            ),
+            usage = Usage(5, 5, 10)
+        )
+        coEvery { apiService.createChatCompletion(capture(requestSlot)) } returns Response.success(mockApiResponse)
+
+        repository.sendMessage(sessionId = sessionId, userPrompt = "2+2")
+
+        val capturedRequest = requestSlot.captured
+        assertEquals(sessionModel, capturedRequest.model)
+        
+        val messages = capturedRequest.messages
+        assertEquals(2, messages.size) // system prompt + user prompt
+        assertEquals("system", messages[0].role)
+        assertEquals(sessionPrompt, messages[0].content)
+        
+        verify { preferencesManager.getSystemPromptSync(sessionModel) }
     }
 }

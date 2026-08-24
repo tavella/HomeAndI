@@ -41,12 +41,13 @@ class SettingsViewModel(
     }
 
     private fun loadPreferences() {
+        val model = preferencesManager.getModelSync()
         _uiState.update {
             it.copy(
                 host = preferencesManager.getHostSync(),
                 port = preferencesManager.getPortSync().toString(),
-                modelName = preferencesManager.getModelSync(),
-                systemPrompt = preferencesManager.getSystemPromptSync(),
+                modelName = model,
+                systemPrompt = preferencesManager.getSystemPromptSync(model),
                 isDarkMode = preferencesManager.getDarkModeSync()
             )
         }
@@ -66,7 +67,13 @@ class SettingsViewModel(
     }
 
     fun updateModelName(modelName: String) {
-        _uiState.update { it.copy(modelName = modelName) }
+        val promptForModel = preferencesManager.getSystemPromptSync(modelName)
+        _uiState.update { 
+            it.copy(
+                modelName = modelName,
+                systemPrompt = promptForModel
+            ) 
+        }
     }
 
     fun updateSystemPrompt(systemPrompt: String) {

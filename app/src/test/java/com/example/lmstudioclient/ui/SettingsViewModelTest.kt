@@ -35,7 +35,7 @@ class SettingsViewModelTest {
         every { preferencesManager.getHostSync() } returns "192.168.1.100"
         every { preferencesManager.getPortSync() } returns 1234
         every { preferencesManager.getModelSync() } returns "local-model"
-        every { preferencesManager.getSystemPromptSync() } returns "Test System Prompt"
+        every { preferencesManager.getSystemPromptSync(any()) } returns "Test System Prompt"
 
         viewModel = SettingsViewModel(preferencesManager, repository)
     }
@@ -134,5 +134,17 @@ class SettingsViewModelTest {
         assertTrue(viewModel.uiState.value.saveMessage?.contains("successfully") == true)
         coVerify { repository.unloadModel(modelId) }
         coVerify { repository.testConnection() } // Verify it refreshes the list
+    }
+
+    @Test
+    fun `updateModelName updates systemPrompt in UI state to model-specific prompt`() {
+        val specificPrompt = "You are a code completion model."
+        every { preferencesManager.getSystemPromptSync("code-llama") } returns specificPrompt
+
+        viewModel.updateModelName("code-llama")
+
+        val state = viewModel.uiState.value
+        assertEquals("code-llama", state.modelName)
+        assertEquals(specificPrompt, state.systemPrompt)
     }
 }

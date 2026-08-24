@@ -103,7 +103,10 @@ class ChatRepository(
         // 3. Build API message list (System prompt + historical context)
         val apiMessages = mutableListOf<ApiMessage>()
 
-        val systemPrompt = preferencesManager.getSystemPromptSync()
+        val session = chatSessionDao.getSessionById(sessionId)
+        val model = session?.modelName ?: preferencesManager.getModelSync()
+
+        val systemPrompt = preferencesManager.getSystemPromptSync(model)
         if (systemPrompt.isNotBlank()) {
             apiMessages.add(ApiMessage(role = "system", content = systemPrompt))
         }
@@ -128,7 +131,6 @@ class ChatRepository(
         }
 
         // 4. Construct Retrofit Payload
-        val model = preferencesManager.getModelSync()
         val request = ChatCompletionRequest(
             model = model,
             messages = apiMessages,
@@ -187,11 +189,70 @@ class ChatRepository(
             if (response.isSuccessful) {
                 NetworkResult.Success(Unit)
             } else {
-                NetworkResult.Error("Failed to load model: ${response.code()}")
+                val errorBodyStr = response.errorBody()?.string()
+                val parsedErrorMsg = parseErrorMessage(errorBodyStr, response.code())
+                NetworkResult.Error(parsedErrorMsg)
             }
         } catch (e: Exception) {
             NetworkResult.Error("Error loading model: ${e.localizedMessage}")
         }
+    }
+
+    private fun parseErrorMessage(errorBody: String?, responseCode: Int): String {
+        if (errorBody.isNullOrBlank()) {
+            return "Server error (HTTP $responseCode)"
+        }
+        
+        try {
+            val jsonObject = gson.fromJson(errorBody, com.google.gson.JsonObject::class.java)
+            if (jsonObject != null) {
+                if (jsonObject.has("error")) {
+                    val errorElem = jsonObject.get("error")
+                    if (errorElem.isJsonObject) {
+                        val errorObj = errorElem.asJsonObject
+                        if (errorObj.has("message")) {
+                            val msg = errorObj.get("message").asString
+                            if (msg.isNotBlank()) return formatUserFriendlyError(msg, responseCode)
+                        }
+                    } else if (errorElem.isJsonPrimitive) {
+                        val msg = errorElem.asString
+                        if (msg.isNotBlank()) return formatUserFriendlyError(msg, responseCode)
+                    }
+                }
+                if (jsonObject.has("message")) {
+                    val msg = jsonObject.get("message").asString
+                    if (msg.isNotBlank()) return formatUserFriendlyError(msg, responseCode)
+                }
+            }
+        } catch (e: Exception) {
+            // Not a JSON object
+        }
+        
+        return formatUserFriendlyError(errorBody, responseCode)
+    }
+
+    private fun formatUserFriendlyError(rawMessage: String, responseCode: Int): String {
+        val lowerMessage = rawMessage.lowercase()
+        val isResourceIssue = lowerMessage.contains("memory") ||
+                lowerMessage.contains("allocate") ||
+                lowerMessage.contains("allocation") ||
+                lowerMessage.contains("resource") ||
+                lowerMessage.contains("vram") ||
+                lowerMessage.contains("ram") ||
+                lowerMessage.contains("gpu") ||
+                lowerMessage.contains("oom") ||
+                lowerMessage.contains("capacity")
+
+        if (isResourceIssue) {
+            return "Not enough resources to load the model. The model exceeds the available VRAM or RAM on the server.\n\n" +
+                    "To fix this, try:\n" +
+                    "• Choosing a smaller quantization (e.g., Q4_K_M or Q3_K_S)\n" +
+                    "• Reducing the context length or GPU offload layers\n" +
+                    "• Unloading any currently loaded models first"
+        }
+
+        val cleanMsg = if (rawMessage.length > 200) rawMessage.take(200) + "..." else rawMessage
+        return "Failed to load model: $cleanMsg"
     }
 
     suspend fun unloadModel(instanceId: String): NetworkResult<Unit> = withContext(Dispatchers.IO) {
