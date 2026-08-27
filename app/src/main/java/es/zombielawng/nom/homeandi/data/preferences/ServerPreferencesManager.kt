@@ -29,6 +29,12 @@ class ServerPreferencesManager(context: Context) {
     private val _isDarkModeFlow = MutableStateFlow(getDarkModeSync())
     val isDarkModeFlow: Flow<Boolean?> = _isDarkModeFlow.asStateFlow()
 
+    private val _themeModeFlow = MutableStateFlow(getThemeModeSync())
+    val themeModeFlow: Flow<String> = _themeModeFlow.asStateFlow()
+
+    private val _screenshotsEnabledFlow = MutableStateFlow(getScreenshotsEnabledSync())
+    val screenshotsEnabledFlow: Flow<Boolean> = _screenshotsEnabledFlow.asStateFlow()
+
     fun getHostSync(): String {
         return prefs.getString(KEY_HOST, DEFAULT_HOST) ?: DEFAULT_HOST
     }
@@ -108,6 +114,24 @@ class ServerPreferencesManager(context: Context) {
         _isDarkModeFlow.value = isDark
     }
 
+    fun getThemeModeSync(): String {
+        return prefs.getString(KEY_THEME_SELECTION, "system") ?: "system"
+    }
+
+    fun updateThemeMode(mode: String) {
+        prefs.edit().putString(KEY_THEME_SELECTION, mode).apply()
+        _themeModeFlow.value = mode
+    }
+
+    fun getScreenshotsEnabledSync(): Boolean {
+        return prefs.getBoolean(KEY_SCREENSHOTS_ENABLED, true)
+    }
+
+    fun updateScreenshotsEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_SCREENSHOTS_ENABLED, enabled).apply()
+        _screenshotsEnabledFlow.value = enabled
+    }
+
     companion object {
         const val KEY_HOST = "server_host"
         const val KEY_PORT = "server_port"
@@ -117,6 +141,8 @@ class ServerPreferencesManager(context: Context) {
         const val KEY_SYSTEM_PROMPT = "system_prompt"
         const val KEY_THEME_MODE = "theme_mode"
         const val KEY_LAST_SESSION = "last_session_id"
+        const val KEY_SCREENSHOTS_ENABLED = "screenshots_enabled"
+        const val KEY_THEME_SELECTION = "theme_selection"
 
         const val DEFAULT_HOST = "10.0.2.2" // Emulator default targeting host machine
         const val DEFAULT_PORT = 8000

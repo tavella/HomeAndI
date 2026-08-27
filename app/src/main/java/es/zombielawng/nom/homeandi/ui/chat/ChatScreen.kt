@@ -136,6 +136,31 @@ fun ChatScreen(
         }
     }
 
+    // Dynamic screenshot capturing effect on message updates
+    val view = androidx.compose.ui.platform.LocalView.current
+    LaunchedEffect(state.messages.size, state.isGenerating) {
+        if (state.isScreenshotsEnabled && state.messages.isNotEmpty() && !state.isGenerating) {
+            kotlinx.coroutines.delay(800)
+            if (view.width > 0 && view.height > 0) {
+                try {
+                    val bitmap = android.graphics.Bitmap.createBitmap(view.width, view.height, android.graphics.Bitmap.Config.ARGB_8888)
+                    val canvas = android.graphics.Canvas(bitmap)
+                    view.draw(canvas)
+                    val thumbnail = android.graphics.Bitmap.createScaledBitmap(bitmap, 90, 120, true)
+                    val file = java.io.File(context.filesDir, "screenshot_${state.activeSession?.id}.png")
+                    java.io.FileOutputStream(file).use { out ->
+                        thumbnail.compress(android.graphics.Bitmap.CompressFormat.PNG, 90, out)
+                    }
+                    state.activeSession?.id?.let { sessionId ->
+                        viewModel.updateSessionScreenshot(sessionId, file.absolutePath)
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+        }
+    }
+
     // Scroll to bottom when messages update or generation starts
     LaunchedEffect(state.messages.size, state.isGenerating) {
         val totalItems = state.messages.size + (if (state.isGenerating) 1 else 0)
@@ -172,6 +197,7 @@ fun ChatScreen(
             SessionDrawerContent(
                 sessions = state.sessions,
                 activeSessionId = state.activeSession?.id,
+                isScreenshotsEnabled = state.isScreenshotsEnabled,
                 onSelectSession = { id ->
                     viewModel.selectSession(id)
                     scope.launch { drawerState.close() }
@@ -182,6 +208,9 @@ fun ChatScreen(
                 },
                 onDeleteSession = { id ->
                     viewModel.deleteSession(id)
+                },
+                onRenameSession = { id, title ->
+                    viewModel.renameSession(id, title)
                 },
                 onOpenSettings = {
                     scope.launch { drawerState.close() }
@@ -313,7 +342,7 @@ fun ChatScreen(
                                         text = if (state.activeSession?.id == state.generatingSessionId) {
                                             "HomeAndI is thinking..."
                                         } else {
-                                            "Another conversation is currently in progress. Please wait until it has finished."
+                                            "Another conversation is processing. Please wait until it has finished or manually stop it."
                                         },
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.primary
@@ -450,23 +479,40 @@ fun ChatScreen(
 
                         Spacer(modifier = Modifier.width(8.dp))
 
-                        // Send Button
-                        IconButton(
-                            onClick = {
-                                viewModel.sendMessage(inputTextFieldValue.text)
-                                inputTextFieldValue = TextFieldValue("")
-                            },
-                            enabled = !state.isAnySessionGenerating && (inputTextFieldValue.text.isNotBlank() || state.pendingAttachments.isNotEmpty()),
-                            colors = IconButtonDefaults.iconButtonColors(
-                                containerColor = MaterialTheme.colorScheme.primary,
-                                contentColor = MaterialTheme.colorScheme.onPrimary,
-                                disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant
-                            )
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.Send,
-                                contentDescription = "Send Message"
-                            )
+                        // Send or Stop Button
+                        if (state.isAnySessionGenerating) {
+                            IconButton(
+                                onClick = {
+                                    state.activeSession?.id?.let { viewModel.stopGeneration(it) }
+                                },
+                                colors = IconButtonDefaults.iconButtonColors(
+                                    containerColor = MaterialTheme.colorScheme.error,
+                                    contentColor = MaterialTheme.colorScheme.onError
+                                )
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Stop,
+                                    contentDescription = "Stop Generating"
+                                )
+                            }
+                        } else {
+                            IconButton(
+                                onClick = {
+                                    viewModel.sendMessage(inputTextFieldValue.text)
+                                    inputTextFieldValue = TextFieldValue("")
+                                },
+                                enabled = (inputTextFieldValue.text.isNotBlank() || state.pendingAttachments.isNotEmpty()),
+                                colors = IconButtonDefaults.iconButtonColors(
+                                    containerColor = MaterialTheme.colorScheme.primary,
+                                    contentColor = MaterialTheme.colorScheme.onPrimary,
+                                    disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant
+                                )
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Send,
+                                    contentDescription = "Send Message"
+                                )
+                            }
                         }
                     }
                 }

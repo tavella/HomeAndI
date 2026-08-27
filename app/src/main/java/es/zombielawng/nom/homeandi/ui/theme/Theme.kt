@@ -43,21 +43,36 @@ private val LightColorScheme = lightColorScheme(
     onSurfaceVariant = LightOnSurfaceVariant
 )
 
+private val WarmNavyColorScheme = darkColorScheme(
+    primary = WarmNavyPrimary,
+    onPrimary = WarmNavyOnPrimary,
+    primaryContainer = WarmNavyPrimaryContainer,
+    onPrimaryContainer = WarmNavyOnPrimaryContainer,
+    secondary = WarmNavySecondary,
+    onSecondary = WarmNavyOnSecondary,
+    secondaryContainer = WarmNavySecondaryContainer,
+    onSecondaryContainer = WarmNavyOnSecondaryContainer,
+    background = WarmNavyBackground,
+    surface = WarmNavySurface,
+    surfaceVariant = WarmNavySurfaceVariant,
+    onSurface = WarmNavyOnSurface,
+    onSurfaceVariant = WarmNavyOnSurfaceVariant
+)
+
 @Composable
 fun HomeAndITheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
-    isDarkModeOverride: Boolean? = null,
+    themeMode: String = "system",
     dynamicColor: Boolean = true,
     content: @Composable () -> Unit
 ) {
-    val finalDarkTheme = isDarkModeOverride ?: darkTheme
-    val colorScheme = when {
-        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-            val context = LocalContext.current
-            if (finalDarkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+    val darkTheme = isSystemInDarkTheme()
+    val colorScheme = when (themeMode) {
+        "light" -> LightColorScheme
+        "dark" -> DarkColorScheme
+        "warm_navy" -> WarmNavyColorScheme
+        else -> {
+            if (darkTheme) DarkColorScheme else LightColorScheme
         }
-        finalDarkTheme -> DarkColorScheme
-        else -> LightColorScheme
     }
 
     val view = LocalView.current
@@ -65,7 +80,8 @@ fun HomeAndITheme(
         SideEffect {
             val window = (view.context as Activity).window
             window.statusBarColor = colorScheme.background.toArgb()
-            WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = !finalDarkTheme
+            WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = 
+                (themeMode == "light" || (themeMode == "system" && !darkTheme))
         }
     }
 

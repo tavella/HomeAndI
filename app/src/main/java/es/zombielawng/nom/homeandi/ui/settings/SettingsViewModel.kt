@@ -25,7 +25,9 @@ data class SettingsUiState(
     val availableModels: List<ModelData> = emptyList(),
     val saveMessage: String? = null,
     val isModelActionLoading: Boolean = false,
-    val modelActionMessage: String? = null
+    val modelActionMessage: String? = null,
+    val isScreenshotsEnabled: Boolean = true,
+    val themeMode: String = "system"
 )
 
 class SettingsViewModel(
@@ -50,7 +52,9 @@ class SettingsViewModel(
                 apiKey = preferencesManager.getApiKeySync(),
                 modelName = model,
                 systemPrompt = preferencesManager.getSystemPromptSync(model),
-                isDarkMode = preferencesManager.getDarkModeSync()
+                isDarkMode = preferencesManager.getDarkModeSync(),
+                isScreenshotsEnabled = preferencesManager.getScreenshotsEnabledSync(),
+                themeMode = preferencesManager.getThemeModeSync()
             )
         }
     }
@@ -58,6 +62,11 @@ class SettingsViewModel(
     fun updateDarkMode(isDark: Boolean?) {
         _uiState.update { it.copy(isDarkMode = isDark) }
         preferencesManager.updateDarkMode(isDark)
+    }
+
+    fun updateThemeMode(mode: String) {
+        _uiState.update { it.copy(themeMode = mode) }
+        preferencesManager.updateThemeMode(mode)
     }
 
     fun updateHost(host: String) {
@@ -192,6 +201,35 @@ class SettingsViewModel(
 
     fun clearSaveMessage() {
         _uiState.update { it.copy(saveMessage = null) }
+    }
+
+    fun updateScreenshotsEnabled(enabled: Boolean) {
+        _uiState.update { it.copy(isScreenshotsEnabled = enabled) }
+        preferencesManager.updateScreenshotsEnabled(enabled)
+    }
+
+    fun deleteModel(modelId: String) {
+        val model = _uiState.value.availableModels.find { it.id == modelId }
+        val displayName = model?.displayName ?: modelId
+        _uiState.update { it.copy(isModelActionLoading = true, modelActionMessage = "Deleting $displayName...") }
+        viewModelScope.launch {
+            when (val result = repository.deleteModel(modelId)) {
+                is NetworkResult.Success -> {
+                    _uiState.update { it.copy(saveMessage = "Model deleted successfully!", modelActionMessage = null) }
+                    // Update settings preference if the currently selected model was deleted
+                    if (_uiState.value.modelName == modelId) {
+                        updateModelName(ServerPreferencesManager.DEFAULT_MODEL)
+                    }
+                    fetchModels()
+                }
+                is NetworkResult.Error -> {
+                    _uiState.update { it.copy(saveMessage = "Error deleting model: ${result.message}", isModelActionLoading = false, modelActionMessage = null) }
+                }
+                else -> {
+                    _uiState.update { it.copy(isModelActionLoading = false, modelActionMessage = null) }
+                }
+            }
+        }
     }
 
     class Factory(

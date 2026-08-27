@@ -40,3 +40,21 @@ val LightOnSurfaceVariant = Color(0xFF64748B)
 val SuccessGreen = Color(0xFF10B981)
 val ErrorRed = Color(0xFFEF4444)
 val WarningAmber = Color(0xFFF59E0B)
+
+// Warm Navy Theme Color Palette
+val WarmNavyPrimary = Color(0xFF90CAF9) // Warm Marine Blue
+val WarmNavyOnPrimary = Color(0xFF0D253F)
+val WarmNavyPrimaryContainer = Color(0xFF1E3A5F)
+val WarmNavyOnPrimaryContainer = Color(0xFFD1E8FF)
+
+val WarmNavySecondary = Color(0xFFFFB74D) // Warm Amber/Gold
+val WarmNavyOnSecondary = Color(0xFF4A2F00)
+val WarmNavySecondaryContainer = Color(0xFF7A4F00)
+val WarmNavyOnSecondaryContainer = Color(0xFFFFE0B2)
+
+val WarmNavyBackground = Color(0xFF111E2E) // Deep Slate Navy
+val WarmNavySurface = Color(0xFF1A2A3A) // Slate Surface
+val WarmNavySurfaceVariant = Color(0xFF243B53) // Slate Elevation
+val WarmNavyOnSurface = Color(0xFFFFFBEA) // Warm Cream Text
+val WarmNavyOnSurfaceVariant = Color(0xFFA5B8CC) // Muted Blue-Gray Text
+

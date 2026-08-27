@@ -35,9 +35,9 @@ class MainActivity : ComponentActivity() {
         val preferencesManager = (application as HomeAndIApplication).preferencesManager
 
         setContent {
-            val isDarkModeOverride by preferencesManager.isDarkModeFlow.collectAsState(initial = preferencesManager.getDarkModeSync())
+            val themeMode by preferencesManager.themeModeFlow.collectAsState(initial = preferencesManager.getThemeModeSync())
 
-            HomeAndITheme(isDarkModeOverride = isDarkModeOverride) {
+            HomeAndITheme(themeMode = themeMode) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background

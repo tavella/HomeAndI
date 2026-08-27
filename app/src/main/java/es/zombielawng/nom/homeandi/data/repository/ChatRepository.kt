@@ -161,6 +161,9 @@ class ChatRepository(
                 chatMessageDao.updateMessageStatus(userMsgId, status = "ERROR")
                 NetworkResult.Error(errorMsg)
             }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            chatMessageDao.updateMessageStatus(userMsgId, status = "ERROR")
+            throw e
         } catch (e: Exception) {
             chatMessageDao.updateMessageStatus(userMsgId, status = "ERROR")
             NetworkResult.Error("Network error: ${e.localizedMessage ?: "Connection failed"}", e)
@@ -342,6 +345,23 @@ class ChatRepository(
             }
         } catch (e: Exception) {
             NetworkResult.Error("Error unloading model: ${e.localizedMessage}")
+        }
+    }
+
+    suspend fun deleteModel(modelId: String): NetworkResult<Unit> = withContext(Dispatchers.IO) {
+        try {
+            val response = if (isOmlxBackend) {
+                apiService.deleteModelOmlx(modelId)
+            } else {
+                apiService.deleteModel(modelId)
+            }
+            if (response.isSuccessful) {
+                NetworkResult.Success(Unit)
+            } else {
+                NetworkResult.Error("Failed to delete model: ${response.code()}")
+            }
+        } catch (e: Exception) {
+            NetworkResult.Error("Error deleting model: ${e.localizedMessage}")
         }
     }
 

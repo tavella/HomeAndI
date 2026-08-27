@@ -21,5 +21,6 @@ data class ChatScreenState(
     val errorMessage: String? = null,
     val pendingAttachments: List<String> = emptyList(),
     val viewingAttachment: String? = null,
-    val loadedModels: List<ModelData> = emptyList()
+    val loadedModels: List<ModelData> = emptyList(),
+    val isScreenshotsEnabled: Boolean = true
 )

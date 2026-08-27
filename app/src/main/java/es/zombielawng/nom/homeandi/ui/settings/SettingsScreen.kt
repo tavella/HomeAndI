@@ -28,6 +28,7 @@ fun SettingsScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     var expanded by remember { mutableStateOf(false) }
     var showApiKey by remember { mutableStateOf(false) }
+    var modelToDelete by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(state.saveMessage) {
         state.saveMessage?.let { msg ->
@@ -74,13 +75,14 @@ fun SettingsScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Column {
+                        Column(modifier = Modifier.weight(1f)) {
                             Text(text = "Theme Mode", style = MaterialTheme.typography.bodyLarge)
                             Text(
-                                text = when(state.isDarkMode) {
-                                    null -> "Follow System"
-                                    false -> "Always Light"
-                                    true -> "Always Dark"
+                                text = when(state.themeMode) {
+                                    "light" -> "Always Light"
+                                    "dark" -> "Always Dark"
+                                    "warm_navy" -> "Warm Navy"
+                                    else -> "Follow System"
                                 },
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.primary
@@ -88,28 +90,51 @@ fun SettingsScreen(
                         }
 
                         Row {
-                            IconButton(onClick = { viewModel.updateDarkMode(false) }) {
+                            IconButton(onClick = { viewModel.updateThemeMode("light") }) {
                                 Icon(
                                     imageVector = Icons.Rounded.LightMode,
                                     contentDescription = "Light Mode",
-                                    tint = if (state.isDarkMode == false) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+                                    tint = if (state.themeMode == "light") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
                                 )
                             }
-                            IconButton(onClick = { viewModel.updateDarkMode(true) }) {
+                            IconButton(onClick = { viewModel.updateThemeMode("dark") }) {
                                 Icon(
                                     imageVector = Icons.Rounded.DarkMode,
                                     contentDescription = "Dark Mode",
-                                    tint = if (state.isDarkMode == true) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+                                    tint = if (state.themeMode == "dark") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
                                 )
                             }
-                            IconButton(onClick = { viewModel.updateDarkMode(null) }) {
+                            IconButton(onClick = { viewModel.updateThemeMode("warm_navy") }) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Palette,
+                                    contentDescription = "Warm Navy Mode",
+                                    tint = if (state.themeMode == "warm_navy") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+                                )
+                            }
+                            IconButton(onClick = { viewModel.updateThemeMode("system") }) {
                                 Icon(
                                     imageVector = Icons.Rounded.Contrast,
                                     contentDescription = "System Mode",
-                                    tint = if (state.isDarkMode == null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+                                    tint = if (state.themeMode == "system") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
                                 )
                             }
                         }
+                    }
+
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column {
+                            Text(text = "Show Conversation Previews", style = MaterialTheme.typography.bodyLarge)
+                            Text(text = "Display screenshots in session slideout", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.outline)
+                        }
+                        Switch(
+                            checked = state.isScreenshotsEnabled,
+                            onCheckedChange = { viewModel.updateScreenshotsEnabled(it) }
+                        )
                     }
                 }
             }
@@ -197,13 +222,24 @@ fun SettingsScreen(
                 singleLine = true
             )
 
-            // Model Configuration
+            Button(
+                onClick = { viewModel.saveSettings() },
+                modifier = Modifier.fillMaxWidth(),
+                shape = MaterialTheme.shapes.medium
+            ) {
+                Icon(imageVector = Icons.Rounded.Save, contentDescription = null)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Save Server Configuration")
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text(text = "Target LLM Model", style = MaterialTheme.typography.titleMedium)
+                Text(text = "Model Management", style = MaterialTheme.typography.titleMedium)
                 if (state.connectionState is ConnectionState.Testing) {
                     CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
                 } else {
@@ -215,70 +251,8 @@ fun SettingsScreen(
                 }
             }
 
-            ExposedDropdownMenuBox(
-                expanded = expanded,
-                onExpandedChange = { 
-                    if (state.availableModels.isNotEmpty()) {
-                        expanded = !expanded 
-                    } else {
-                        viewModel.fetchModels()
-                    }
-                },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                OutlinedTextField(
-                    value = state.modelName,
-                    onValueChange = { viewModel.updateModelName(it) },
-                    readOnly = state.availableModels.isNotEmpty(),
-                    label = { Text("Model Identifier") },
-                    placeholder = { Text("Select or type a model...") },
-                    leadingIcon = { Icon(Icons.Rounded.Psychology, contentDescription = null) },
-                    trailingIcon = {
-                        if (state.availableModels.isNotEmpty()) {
-                            ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded)
-                        } else {
-                            Icon(
-                                imageVector = Icons.Rounded.Search,
-                                contentDescription = "Query models",
-                                modifier = Modifier.clickable { viewModel.fetchModels() }
-                            )
-                        }
-                    },
-                    modifier = Modifier
-                        .menuAnchor()
-                        .fillMaxWidth(),
-                    singleLine = true
-                )
-
-                if (state.availableModels.any { it.isLoaded }) {
-                    ExposedDropdownMenu(
-                        expanded = expanded,
-                        onDismissRequest = { expanded = false }
-                    ) {
-                        state.availableModels.filter { it.isLoaded }.forEach { model ->
-                            DropdownMenuItem(
-                                text = { 
-                                    Column {
-                                        Text(model.displayName ?: model.id, style = MaterialTheme.typography.bodyLarge)
-                                        if (model.id == state.modelName) {
-                                            Text("Currently Selected", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
-                                        }
-                                    }
-                                },
-                                onClick = {
-                                    viewModel.updateModelName(model.id)
-                                    expanded = false
-                                },
-                                contentPadding = ExposedDropdownMenuDefaults.ItemContentPadding
-                            )
-                        }
-                    }
-                }
-            }
-
             // Server Model Management
             if (state.availableModels.isNotEmpty()) {
-                Text(text = "Server Model Management", style = MaterialTheme.typography.titleMedium)
                 Card(
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
                     modifier = Modifier.fillMaxWidth()
@@ -287,11 +261,13 @@ fun SettingsScreen(
                         // Header
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text("Model ID", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(2f))
                             Text("Status", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
-                            Text("Action", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1.5f))
+                            Text("Action", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1.2f))
+                            Text("Delete", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(0.8f))
                         }
                         HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
@@ -318,7 +294,7 @@ fun SettingsScreen(
                                     modifier = Modifier.weight(1f)
                                 )
 
-                                Box(modifier = Modifier.weight(1.5f)) {
+                                Box(modifier = Modifier.weight(1.2f)) {
                                     if (isLoaded) {
                                         val instanceId = model.loadedInstances?.firstOrNull()?.id ?: model.id
                                         TextButton(
@@ -337,6 +313,18 @@ fun SettingsScreen(
                                             Text("Load")
                                         }
                                     }
+                                }
+
+                                IconButton(
+                                    onClick = { modelToDelete = model.id },
+                                    modifier = Modifier.weight(0.8f),
+                                    enabled = !state.isModelActionLoading
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Delete,
+                                        contentDescription = "Delete Model",
+                                        tint = MaterialTheme.colorScheme.error
+                                    )
                                 }
                             }
                         }
@@ -384,18 +372,6 @@ fun SettingsScreen(
                     .height(120.dp),
                 maxLines = 4
             )
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            Button(
-                onClick = { viewModel.saveSettings() },
-                modifier = Modifier.fillMaxWidth(),
-                shape = MaterialTheme.shapes.medium
-            ) {
-                Icon(imageVector = Icons.Rounded.Save, contentDescription = null)
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("Save Server Configuration")
-            }
         }
     }
 
@@ -426,5 +402,29 @@ fun SettingsScreen(
                 }
             }
         }
+    }
+    // Second chance model deletion confirmation modal
+    if (modelToDelete != null) {
+        AlertDialog(
+            onDismissRequest = { modelToDelete = null },
+            title = { Text("Delete Model") },
+            text = { Text("Are you sure you want to delete this model from the local server? This action is permanent and cannot be undone.") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        modelToDelete?.let { viewModel.deleteModel(it) }
+                        modelToDelete = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("Delete")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { modelToDelete = null }) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 }

@@ -39,4 +39,14 @@ interface HomeAndIApiService {
 
     @GET("v1/models/status")
     suspend fun getModelsStatus(): Response<com.google.gson.JsonElement>
+
+    @retrofit2.http.DELETE("admin/api/models/{model_id}")
+    suspend fun deleteModelOmlx(
+        @Path("model_id") modelId: String
+    ): Response<Unit>
+
+    @retrofit2.http.DELETE("v1/models/{model_id}")
+    suspend fun deleteModel(
+        @Path("model_id") modelId: String
+    ): Response<Unit>
 }

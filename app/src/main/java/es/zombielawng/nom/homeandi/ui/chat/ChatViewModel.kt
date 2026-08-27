@@ -37,6 +37,15 @@ class ChatViewModel(
         observeSessions()
         fetchLoadedModels()
         observeGlobalWorkStatus()
+        observeScreenshotsEnabledSetting()
+    }
+
+    private fun observeScreenshotsEnabledSetting() {
+        viewModelScope.launch {
+            preferencesManager.screenshotsEnabledFlow.collect { enabled ->
+                _uiState.update { it.copy(isScreenshotsEnabled = enabled) }
+            }
+        }
     }
 
     private fun observeSessions() {
@@ -215,6 +224,28 @@ class ChatViewModel(
         viewModelScope.launch {
             repository.deleteSession(sessionId)
         }
+    }
+
+    fun updateSessionScreenshot(sessionId: String, path: String?) {
+        viewModelScope.launch {
+            val session = _uiState.value.sessions.find { it.id == sessionId } ?: return@launch
+            val updated = session.copy(screenshotPath = path)
+            repository.updateSession(updated)
+        }
+    }
+
+    fun renameSession(sessionId: String, newTitle: String) {
+        if (newTitle.isBlank()) return
+        viewModelScope.launch {
+            val session = _uiState.value.sessions.find { it.id == sessionId } ?: return@launch
+            val updated = session.copy(title = newTitle)
+            repository.updateSession(updated)
+        }
+    }
+
+    fun stopGeneration(sessionId: String) {
+        workManager.cancelUniqueWork("send_message_$sessionId")
+        _uiState.update { it.copy(isGenerating = false, isAnySessionGenerating = false, generatingSessionId = null) }
     }
 
     fun addAttachment(path: String) {
