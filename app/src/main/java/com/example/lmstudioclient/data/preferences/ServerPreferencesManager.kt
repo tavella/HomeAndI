@@ -20,6 +20,9 @@ class ServerPreferencesManager(context: Context) {
     private val _modelFlow = MutableStateFlow(getModelSync())
     val modelFlow: Flow<String> = _modelFlow.asStateFlow()
 
+    private val _apiKeyFlow = MutableStateFlow(getApiKeySync())
+    val apiKeyFlow: Flow<String> = _apiKeyFlow.asStateFlow()
+
     private val _systemPromptFlow = MutableStateFlow(getSystemPromptSync())
     val systemPromptFlow: Flow<String> = _systemPromptFlow.asStateFlow()
 
@@ -46,6 +49,10 @@ class ServerPreferencesManager(context: Context) {
         return prefs.getString(KEY_MODEL, DEFAULT_MODEL) ?: DEFAULT_MODEL
     }
 
+    fun getApiKeySync(): String {
+        return prefs.getString(KEY_API_KEY, DEFAULT_API_KEY) ?: DEFAULT_API_KEY
+    }
+
     fun getSystemPromptSync(modelName: String = getModelSync()): String {
         val key = getSystemPromptKey(modelName)
         return prefs.getString(key, DEFAULT_SYSTEM_PROMPT) ?: DEFAULT_SYSTEM_PROMPT
@@ -64,7 +71,7 @@ class ServerPreferencesManager(context: Context) {
         return "${getSchemeSync()}://${getHostSync()}:${getPortSync()}/"
     }
 
-    fun updateServerConfig(host: String, port: Int, model: String, systemPrompt: String = getSystemPromptSync(model)) {
+    fun updateServerConfig(host: String, port: Int, model: String, systemPrompt: String = getSystemPromptSync(model), apiKey: String = getApiKeySync()) {
         val cleanHost = host.trim().removePrefix("http://").removePrefix("https://")
         val cleanModel = model.trim()
         val keyForModel = getSystemPromptKey(cleanModel)
@@ -74,12 +81,14 @@ class ServerPreferencesManager(context: Context) {
             .putString(KEY_MODEL, cleanModel)
             .putString(keyForModel, systemPrompt)
             .putString(KEY_SYSTEM_PROMPT, systemPrompt)
+            .putString(KEY_API_KEY, apiKey.trim())
             .apply()
 
         _hostFlow.value = cleanHost
         _portFlow.value = port
         _modelFlow.value = cleanModel
         _systemPromptFlow.value = systemPrompt
+        _apiKeyFlow.value = apiKey.trim()
     }
 
     fun updateLastSessionId(sessionId: String?) {
@@ -104,14 +113,16 @@ class ServerPreferencesManager(context: Context) {
         const val KEY_PORT = "server_port"
         const val KEY_SCHEME = "server_scheme"
         const val KEY_MODEL = "server_model"
+        const val KEY_API_KEY = "server_api_key"
         const val KEY_SYSTEM_PROMPT = "system_prompt"
         const val KEY_THEME_MODE = "theme_mode"
         const val KEY_LAST_SESSION = "last_session_id"
 
         const val DEFAULT_HOST = "10.0.2.2" // Emulator default targeting host machine
-        const val DEFAULT_PORT = 1234
+        const val DEFAULT_PORT = 8000
         const val DEFAULT_SCHEME = "http"
         const val DEFAULT_MODEL = "local-model"
+        const val DEFAULT_API_KEY = ""
         const val DEFAULT_SYSTEM_PROMPT = "You are a precise, efficient, and direct AI assistant. Your goal is to provide accurate, well-structured, and actionable answers. Prioritize clarity over verbosity, avoid unnecessary conversational filler, and utilize Markdown (such as bullet points and code blocks) to organize information cleanly. When handling technical tasks, focus on clean implementation and practical utility."
     }
 }

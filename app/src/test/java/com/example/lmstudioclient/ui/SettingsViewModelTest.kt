@@ -34,6 +34,7 @@ class SettingsViewModelTest {
 
         every { preferencesManager.getHostSync() } returns "192.168.1.100"
         every { preferencesManager.getPortSync() } returns 1234
+        every { preferencesManager.getApiKeySync() } returns ""
         every { preferencesManager.getModelSync() } returns "local-model"
         every { preferencesManager.getSystemPromptSync(any()) } returns "Test System Prompt"
 
@@ -50,6 +51,7 @@ class SettingsViewModelTest {
         val state = viewModel.uiState.value
         assertEquals("192.168.1.100", state.host)
         assertEquals("1234", state.port)
+        assertEquals("", state.apiKey)
         assertEquals("local-model", state.modelName)
         assertEquals("Test System Prompt", state.systemPrompt)
     }
@@ -71,7 +73,7 @@ class SettingsViewModelTest {
         assertEquals(mockModels, state.availableModels)
         assertEquals("llama-3-8b", state.modelName) // Should pick the loaded one
 
-        verify { preferencesManager.updateServerConfig("192.168.1.100", 1234, "local-model", "Test System Prompt") }
+        verify { preferencesManager.updateServerConfig("192.168.1.100", 1234, "local-model", "Test System Prompt", "") }
     }
 
     @Test
@@ -94,7 +96,7 @@ class SettingsViewModelTest {
 
         viewModel.saveSettings()
 
-        verify { preferencesManager.updateServerConfig("10.0.0.5", 8080, "gemma-2-9b", "Test System Prompt") }
+        verify { preferencesManager.updateServerConfig("10.0.0.5", 8080, "gemma-2-9b", "Test System Prompt", "") }
         assertNotNull(viewModel.uiState.value.saveMessage)
     }
 

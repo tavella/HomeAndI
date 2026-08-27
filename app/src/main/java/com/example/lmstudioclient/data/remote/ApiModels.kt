@@ -74,20 +74,49 @@ data class Usage(
  * Model Discovery / Ping Response Payload
  */
 data class ModelListResponse(
-    @SerializedName("models") val models: List<ModelData>?
+    @SerializedName("models") val models: List<ModelData>? = null,
+    @SerializedName("data") val data: List<ModelData>? = null
 )
 
 data class ModelData(
-    @SerializedName("key") val id: String,
+    @SerializedName("key") private val _key: String? = null,
+    @SerializedName("id") private val _id: String? = null,
     @SerializedName("display_name") val displayName: String? = null,
     @SerializedName("format") val format: String? = null,
     @SerializedName("architecture") val architecture: String? = null,
     @SerializedName("size_bytes") val sizeBytes: Long? = null,
     @SerializedName("max_context_length") val maxContextLength: Int? = null,
-    @SerializedName("loaded_instances") val loadedInstances: List<LoadedInstance>? = null
+    @SerializedName("loaded_instances") val loadedInstances: List<LoadedInstance>? = null,
+    val _isOmlxLoaded: Boolean? = null
 ) {
+    constructor(
+        id: String,
+        displayName: String? = null,
+        format: String? = null,
+        architecture: String? = null,
+        sizeBytes: Long? = null,
+        maxContextLength: Int? = null,
+        loadedInstances: List<LoadedInstance>? = null
+    ) : this(
+        _key = id,
+        _id = null,
+        displayName = displayName,
+        format = format,
+        architecture = architecture,
+        sizeBytes = sizeBytes,
+        maxContextLength = maxContextLength,
+        loadedInstances = loadedInstances,
+        _isOmlxLoaded = null
+    )
+
+    val id: String
+        get() = _id ?: _key ?: ""
+
     val isLoaded: Boolean
-        get() = !loadedInstances.isNullOrEmpty()
+        get() = if (_isOmlxLoaded != null) _isOmlxLoaded else (!loadedInstances.isNullOrEmpty() || _id != null)
+
+    val supportsManagement: Boolean
+        get() = true // Set to true to allow showing the table for all backends
 }
 
 data class LoadedInstance(
@@ -101,4 +130,13 @@ data class ModelLoadRequest(
 
 data class ModelUnloadRequest(
     @SerializedName("instance_id") val instanceId: String
+)
+
+data class OmlxModelLoadRequest(
+    @SerializedName("model_path") val modelPath: String,
+    @SerializedName("gguf_variant") val ggufVariant: String? = null
+)
+
+data class OmlxModelUnloadRequest(
+    @SerializedName("model_path") val modelPath: String
 )

@@ -125,19 +125,19 @@ class ChatRepositoryTest {
     @Test
     fun `loadModel calls apiService with correct request`() = runTest {
         val modelId = "test-model"
-        coEvery { apiService.loadModel(any()) } returns Response.success(Unit)
+        coEvery { apiService.loadModelLmStudio(any()) } returns Response.success(Unit)
 
         val result = repository.loadModel(modelId)
 
         assertTrue(result is NetworkResult.Success)
-        coVerify { apiService.loadModel(ModelLoadRequest(modelId)) }
+        coVerify { apiService.loadModelLmStudio(ModelLoadRequest(modelId)) }
     }
 
     @Test
     fun `loadModel returns user-friendly memory error message on resource exhaustion JSON response`() = runTest {
         val modelId = "test-huge-model"
         val errorJson = "{\"error\": {\"message\": \"failed to allocate 8.5 GB of VRAM. Only 2.1 GB free.\", \"code\": \"out_of_memory\"}}"
-        coEvery { apiService.loadModel(any()) } returns Response.error(
+        coEvery { apiService.loadModelLmStudio(any()) } returns Response.error(
             500,
             okhttp3.ResponseBody.create(null, errorJson)
         )
@@ -153,7 +153,7 @@ class ChatRepositoryTest {
     @Test
     fun `loadModel returns user-friendly memory error message on plain text resource error`() = runTest {
         val modelId = "test-huge-model"
-        coEvery { apiService.loadModel(any()) } returns Response.error(
+        coEvery { apiService.loadModelLmStudio(any()) } returns Response.error(
             500,
             okhttp3.ResponseBody.create(null, "OOM allocation failed on GPU")
         )
@@ -168,12 +168,12 @@ class ChatRepositoryTest {
     @Test
     fun `unloadModel calls apiService with correct request`() = runTest {
         val instanceId = "test-instance"
-        coEvery { apiService.unloadModel(any()) } returns Response.success(Unit)
+        coEvery { apiService.unloadModelLmStudio(any()) } returns Response.success(Unit)
 
         val result = repository.unloadModel(instanceId)
 
         assertTrue(result is NetworkResult.Success)
-        coVerify { apiService.unloadModel(ModelUnloadRequest(instanceId)) }
+        coVerify { apiService.unloadModelLmStudio(ModelUnloadRequest(instanceId)) }
     }
 
     @Test

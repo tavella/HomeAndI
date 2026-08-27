@@ -55,7 +55,7 @@ class LMStudioApplication : Application() {
 
         // 4. Initialize Retrofit with dummy base URL (overridden dynamically by interceptor)
         val retrofit = Retrofit.Builder()
-            .baseUrl("http://localhost:1234/")
+            .baseUrl("http://localhost:8000/")
             .client(okHttpClient)
             .addConverterFactory(GsonConverterFactory.create())
             .build()

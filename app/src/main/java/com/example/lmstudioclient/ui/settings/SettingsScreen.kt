@@ -8,8 +8,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.example.lmstudioclient.ui.components.ConnectionState
 import com.example.lmstudioclient.ui.components.ConnectionStatusBadge
@@ -23,6 +27,7 @@ fun SettingsScreen(
     val state by viewModel.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     var expanded by remember { mutableStateOf(false) }
+    var showApiKey by remember { mutableStateOf(false) }
 
     LaunchedEffect(state.saveMessage) {
         state.saveMessage?.let { msg ->
@@ -166,8 +171,28 @@ fun SettingsScreen(
                 value = state.port,
                 onValueChange = { viewModel.updatePort(it) },
                 label = { Text("Port Number") },
-                placeholder = { Text("1234") },
+                placeholder = { Text("8000") },
                 leadingIcon = { Icon(Icons.Rounded.Numbers, contentDescription = null) },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
+
+            OutlinedTextField(
+                value = state.apiKey,
+                onValueChange = { viewModel.updateApiKey(it) },
+                label = { Text("API Key") },
+                placeholder = { Text("Optional - for servers that require a key") },
+                leadingIcon = { Icon(Icons.Rounded.Key, contentDescription = null) },
+                trailingIcon = {
+                    IconButton(onClick = { showApiKey = !showApiKey }) {
+                        Icon(
+                            imageVector = if (showApiKey) Icons.Rounded.VisibilityOff else Icons.Rounded.Visibility,
+                            contentDescription = if (showApiKey) "Hide API key" else "Show API key"
+                        )
+                    }
+                },
+                visualTransformation = if (showApiKey) VisualTransformation.None else PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true
             )

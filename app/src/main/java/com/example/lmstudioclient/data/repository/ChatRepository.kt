@@ -24,6 +24,7 @@ class ChatRepository(
     private val context: Context? = null
 ) {
     private val gson = Gson()
+    private var isOmlxBackend: Boolean = false
 
     fun getAllSessions(): Flow<List<ChatSessionEntity>> = chatSessionDao.getAllSessions()
 
@@ -169,11 +170,79 @@ class ChatRepository(
     /**
      * Executes ping/connectivity test against HomeAndI server (/v1/models).
      */
+    private fun parseOmlxLoadedModelIds(jsonElement: com.google.gson.JsonElement?): Set<String> {
+        val loadedIds = mutableSetOf<String>()
+        if (jsonElement == null) return loadedIds
+        try {
+            if (jsonElement.isJsonObject) {
+                val rootObj = jsonElement.asJsonObject
+                val modelsArray = when {
+                    rootObj.has("models") && rootObj.get("models").isJsonArray -> rootObj.getAsJsonArray("models")
+                    rootObj.has("data") && rootObj.get("data").isJsonArray -> rootObj.getAsJsonArray("data")
+                    else -> null
+                }
+                if (modelsArray != null) {
+                    for (element in modelsArray) {
+                        if (element.isJsonObject) {
+                            val obj = element.asJsonObject
+                            val id = obj.get("id")?.asString
+                            val loaded = obj.get("loaded")?.asBoolean ?: false
+                            if (id != null && loaded) {
+                                loadedIds.add(id)
+                            }
+                        }
+                    }
+                } else {
+                    val id = rootObj.get("id")?.asString
+                    val loaded = rootObj.get("loaded")?.asBoolean ?: false
+                    if (id != null && loaded) {
+                        loadedIds.add(id)
+                    }
+                }
+            } else if (jsonElement.isJsonArray) {
+                val array = jsonElement.asJsonArray
+                for (element in array) {
+                    if (element.isJsonObject) {
+                        val obj = element.asJsonObject
+                        val id = obj.get("id")?.asString
+                        val loaded = obj.get("loaded")?.asBoolean ?: false
+                        if (id != null && loaded) {
+                            loadedIds.add(id)
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            // Ignore parse errors
+        }
+        return loadedIds
+    }
+
     suspend fun testConnection(): NetworkResult<List<ModelData>> = withContext(Dispatchers.IO) {
         try {
             val response = apiService.getModels()
             if (response.isSuccessful && response.body() != null) {
-                val models = response.body()?.models ?: emptyList()
+                val body = response.body()
+                isOmlxBackend = body?.data != null && body.models == null
+                val rawModels = body?.models ?: body?.data ?: emptyList()
+
+                val models = if (isOmlxBackend) {
+                    val loadedIds = try {
+                        val statusResponse = apiService.getModelsStatus()
+                        if (statusResponse.isSuccessful) {
+                            parseOmlxLoadedModelIds(statusResponse.body())
+                        } else emptySet()
+                    } catch (e: Exception) {
+                        emptySet()
+                    }
+
+                    rawModels.map { model ->
+                        model.copy(_isOmlxLoaded = loadedIds.contains(model.id))
+                    }
+                } else {
+                    rawModels
+                }
+
                 NetworkResult.Success(models)
             } else {
                 NetworkResult.Error("Server returned code ${response.code()}")
@@ -185,7 +254,11 @@ class ChatRepository(
 
     suspend fun loadModel(modelId: String): NetworkResult<Unit> = withContext(Dispatchers.IO) {
         try {
-            val response = apiService.loadModel(ModelLoadRequest(modelId))
+            val response = if (isOmlxBackend) {
+                apiService.loadModelOmlx(modelId)
+            } else {
+                apiService.loadModelLmStudio(ModelLoadRequest(modelId))
+            }
             if (response.isSuccessful) {
                 NetworkResult.Success(Unit)
             } else {
@@ -257,7 +330,11 @@ class ChatRepository(
 
     suspend fun unloadModel(instanceId: String): NetworkResult<Unit> = withContext(Dispatchers.IO) {
         try {
-            val response = apiService.unloadModel(ModelUnloadRequest(instanceId))
+            val response = if (isOmlxBackend) {
+                apiService.unloadModelOmlx(instanceId)
+            } else {
+                apiService.unloadModelLmStudio(ModelUnloadRequest(instanceId))
+            }
             if (response.isSuccessful) {
                 NetworkResult.Success(Unit)
             } else {

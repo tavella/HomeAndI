@@ -42,6 +42,27 @@ class ServerPreferencesManagerTest {
     }
 
     @Test
+    fun `getApiKeySync returns empty string when no key is stored`() {
+        every { sharedPreferences.getString("server_api_key", any()) } returns null
+        assertEquals("", preferencesManager.getApiKeySync())
+    }
+
+    @Test
+    fun `getApiKeySync returns stored key`() {
+        every { sharedPreferences.getString("server_api_key", any()) } returns "sk-abc123"
+        assertEquals("sk-abc123", preferencesManager.getApiKeySync())
+    }
+
+    @Test
+    fun `updateServerConfig trims and saves api key`() {
+        preferencesManager.updateServerConfig("127.0.0.1", 5001, "code-llama", "prompt", "  sk-abc123  ")
+
+        verify {
+            editor.putString("server_api_key", "sk-abc123")
+        }
+    }
+
+    @Test
     fun `updateServerConfig saves system prompt keyed by model name`() {
         val host = "127.0.0.1"
         val port = 5001

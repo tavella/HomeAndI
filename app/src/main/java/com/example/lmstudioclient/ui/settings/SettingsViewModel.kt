@@ -17,6 +17,7 @@ import kotlinx.coroutines.launch
 data class SettingsUiState(
     val host: String = ServerPreferencesManager.DEFAULT_HOST,
     val port: String = ServerPreferencesManager.DEFAULT_PORT.toString(),
+    val apiKey: String = ServerPreferencesManager.DEFAULT_API_KEY,
     val modelName: String = ServerPreferencesManager.DEFAULT_MODEL,
     val systemPrompt: String = ServerPreferencesManager.DEFAULT_SYSTEM_PROMPT,
     val isDarkMode: Boolean? = null, // null means follow system
@@ -46,6 +47,7 @@ class SettingsViewModel(
             it.copy(
                 host = preferencesManager.getHostSync(),
                 port = preferencesManager.getPortSync().toString(),
+                apiKey = preferencesManager.getApiKeySync(),
                 modelName = model,
                 systemPrompt = preferencesManager.getSystemPromptSync(model),
                 isDarkMode = preferencesManager.getDarkModeSync()
@@ -64,6 +66,10 @@ class SettingsViewModel(
 
     fun updatePort(port: String) {
         _uiState.update { it.copy(port = port) }
+    }
+
+    fun updateApiKey(apiKey: String) {
+        _uiState.update { it.copy(apiKey = apiKey) }
     }
 
     fun updateModelName(modelName: String) {
@@ -95,7 +101,8 @@ class SettingsViewModel(
             host = _uiState.value.host,
             port = portInt,
             model = _uiState.value.modelName,
-            systemPrompt = _uiState.value.systemPrompt
+            systemPrompt = _uiState.value.systemPrompt,
+            apiKey = _uiState.value.apiKey
         )
 
         _uiState.update { it.copy(connectionState = ConnectionState.Testing) }
@@ -177,7 +184,8 @@ class SettingsViewModel(
             host = _uiState.value.host,
             port = portInt,
             model = _uiState.value.modelName,
-            systemPrompt = _uiState.value.systemPrompt
+            systemPrompt = _uiState.value.systemPrompt,
+            apiKey = _uiState.value.apiKey
         )
         _uiState.update { it.copy(saveMessage = "Settings saved successfully!") }
     }

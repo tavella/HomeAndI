@@ -25,8 +25,16 @@ class DynamicUrlInterceptor(
             .port(targetPort)
             .build()
 
+        val apiKey = preferencesManager.getApiKeySync()
+
         val newRequest = originalRequest.newBuilder()
             .url(newUrl)
+            // Attach the configured API key (e.g. for OpenAI-compatible endpoints)
+            .apply {
+                if (apiKey.isNotBlank()) {
+                    header("Authorization", "Bearer $apiKey")
+                }
+            }
             .build()
 
         return chain.proceed(newRequest)
