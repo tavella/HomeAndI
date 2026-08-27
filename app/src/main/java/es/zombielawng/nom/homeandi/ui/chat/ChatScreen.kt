@@ -340,7 +340,7 @@ fun ChatScreen(
                                     Spacer(modifier = Modifier.width(12.dp))
                                     Text(
                                         text = if (state.activeSession?.id == state.generatingSessionId) {
-                                            "HomeAndI is thinking..."
+                                            "${getCleanModelName(state.activeSession?.modelName)} is thinking..."
                                         } else {
                                             "Another conversation is processing. Please wait until it has finished or manually stop it."
                                         },
@@ -665,3 +665,23 @@ fun ModelSelectionDialog(
         }
     )
 }
+
+private fun getCleanModelName(modelId: String?): String {
+    if (modelId.isNullOrBlank()) return "AI"
+    val name = modelId.substringAfterLast('/')
+    val cleaned = name.replace("-4bit", "", ignoreCase = true)
+                      .replace("-instruct", "", ignoreCase = true)
+                      .replace("-it", "", ignoreCase = true)
+                      .replace("-preview", "", ignoreCase = true)
+                      .replace("-chat", "", ignoreCase = true)
+    
+    val parts = cleaned.split('-').filter { it.isNotBlank() }
+    if (parts.isEmpty()) return "AI"
+    
+    if (parts.size >= 2 && parts[0].equals("meta", ignoreCase = true) && parts[1].equals("llama", ignoreCase = true)) {
+        return "Llama"
+    }
+    
+    return parts[0].replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
+}
+

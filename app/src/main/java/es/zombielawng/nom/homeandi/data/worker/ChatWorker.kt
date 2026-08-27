@@ -62,8 +62,12 @@ class ChatWorker(
             notificationManager.createNotificationChannel(channel)
         }
 
+        val app = applicationContext as HomeAndIApplication
+        val model = app.preferencesManager.getModelSync()
+        val cleanModelName = getCleanModelName(model)
+
         val notification: Notification = NotificationCompat.Builder(applicationContext, channelId)
-            .setContentTitle("HomeAndI is Thinking")
+            .setContentTitle("$cleanModelName is Thinking")
             .setContentText("Generating response...")
             .setSmallIcon(android.R.drawable.ic_menu_send)
             .setOngoing(true)
@@ -102,5 +106,24 @@ class ChatWorker(
                 request
             )
         }
+    }
+
+    private fun getCleanModelName(modelId: String?): String {
+        if (modelId.isNullOrBlank()) return "AI"
+        val name = modelId.substringAfterLast('/')
+        val cleaned = name.replace("-4bit", "", ignoreCase = true)
+                          .replace("-instruct", "", ignoreCase = true)
+                          .replace("-it", "", ignoreCase = true)
+                          .replace("-preview", "", ignoreCase = true)
+                          .replace("-chat", "", ignoreCase = true)
+        
+        val parts = cleaned.split('-').filter { it.isNotBlank() }
+        if (parts.isEmpty()) return "AI"
+        
+        if (parts.size >= 2 && parts[0].equals("meta", ignoreCase = true) && parts[1].equals("llama", ignoreCase = true)) {
+            return "Llama"
+        }
+        
+        return parts[0].replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
     }
 }
