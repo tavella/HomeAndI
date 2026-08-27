@@ -135,55 +135,95 @@ open class ChatRepository(
             }
         }
 
-        val geminiApiKey = preferencesManager.getGeminiApiKeySync()
-        val sdkContents = convertToSdkContents(apiMessages)
-        
-        val searchTool = com.google.genai.kotlin.types.Tool(
-            googleSearch = com.google.genai.kotlin.types.GoogleSearch()
-        )
-        val sdkConfig = com.google.genai.kotlin.types.GenerateContentConfig(
-            tools = if (isWebSearchActive) listOf(searchTool) else null,
-            temperature = 0.7,
-            systemInstruction = if (systemPrompt.isNotBlank()) {
-                com.google.genai.kotlin.types.Content(
-                    parts = listOf(com.google.genai.kotlin.types.Part(text = systemPrompt))
+        if (isWebSearchActive) {
+            val geminiApiKey = preferencesManager.getGeminiApiKeySync()
+            val sdkContents = convertToSdkContents(apiMessages)
+            
+            val searchTool = com.google.genai.kotlin.types.Tool(
+                googleSearch = com.google.genai.kotlin.types.GoogleSearch()
+            )
+            val sdkConfig = com.google.genai.kotlin.types.GenerateContentConfig(
+                tools = listOf(searchTool),
+                temperature = 0.7,
+                systemInstruction = if (systemPrompt.isNotBlank()) {
+                    com.google.genai.kotlin.types.Content(
+                        parts = listOf(com.google.genai.kotlin.types.Part(text = systemPrompt))
+                    )
+                } else null
+            )
+
+            try {
+                val sdkClient = createGenAiClient(geminiApiKey)
+                val response = sdkClient.models.generateContent(
+                    model = model,
+                    contents = sdkContents,
+                    config = sdkConfig
                 )
-            } else null
-        )
 
-        try {
-            val sdkClient = createGenAiClient(geminiApiKey)
-            val response = sdkClient.models.generateContent(
-                model = model,
-                contents = sdkContents,
-                config = sdkConfig
-            )
+                val assistantReplyText = response.text ?: "No content returned by Gemini."
+                val groundingMetadata = response.candidates?.firstOrNull()?.groundingMetadata
+                val groundingMetadataJson = if (groundingMetadata != null) {
+                    gson.toJson(groundingMetadata)
+                } else {
+                    null
+                }
 
-            val assistantReplyText = response.text ?: "No content returned by Gemini."
-            val groundingMetadata = response.candidates?.firstOrNull()?.groundingMetadata
-            val groundingMetadataJson = if (groundingMetadata != null) {
-                gson.toJson(groundingMetadata)
-            } else {
-                null
+                val assistantMsg = ChatMessageEntity(
+                    id = UUID.randomUUID().toString(),
+                    sessionId = sessionId,
+                    role = "assistant",
+                    content = assistantReplyText,
+                    timestamp = System.currentTimeMillis(),
+                    status = "SENT",
+                    groundingMetadataJson = groundingMetadataJson
+                )
+                chatMessageDao.insertMessage(assistantMsg)
+                NetworkResult.Success(assistantMsg)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                chatMessageDao.updateMessageStatus(userMsgId, status = "ERROR")
+                throw e
+            } catch (e: Exception) {
+                chatMessageDao.updateMessageStatus(userMsgId, status = "ERROR")
+                NetworkResult.Error("Network error: ${e.localizedMessage ?: "Connection failed"}", e)
             }
-
-            val assistantMsg = ChatMessageEntity(
-                id = UUID.randomUUID().toString(),
-                sessionId = sessionId,
-                role = "assistant",
-                content = assistantReplyText,
-                timestamp = System.currentTimeMillis(),
-                status = "SENT",
-                groundingMetadataJson = groundingMetadataJson
+        } else {
+            val request = ChatCompletionRequest(
+                model = model,
+                messages = apiMessages,
+                temperature = 0.7,
+                tools = null
             )
-            chatMessageDao.insertMessage(assistantMsg)
-            NetworkResult.Success(assistantMsg)
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            chatMessageDao.updateMessageStatus(userMsgId, status = "ERROR")
-            throw e
-        } catch (e: Exception) {
-            chatMessageDao.updateMessageStatus(userMsgId, status = "ERROR")
-            NetworkResult.Error("Network error: ${e.localizedMessage ?: "Connection failed"}", e)
+
+            try {
+                val response = apiService.createChatCompletion(request)
+                if (response.isSuccessful && response.body() != null) {
+                    val body = response.body()!!
+                    val assistantReplyText = body.choices?.firstOrNull()?.message?.content
+                        ?: "No content returned by HomeAndI."
+
+                    val assistantMsg = ChatMessageEntity(
+                        id = UUID.randomUUID().toString(),
+                        sessionId = sessionId,
+                        role = "assistant",
+                        content = assistantReplyText,
+                        timestamp = System.currentTimeMillis(),
+                        status = "SENT",
+                        groundingMetadataJson = null
+                    )
+                    chatMessageDao.insertMessage(assistantMsg)
+                    NetworkResult.Success(assistantMsg)
+                } else {
+                    val errorMsg = "HTTP ${response.code()}: ${response.errorBody()?.string() ?: response.message()}"
+                    chatMessageDao.updateMessageStatus(userMsgId, status = "ERROR")
+                    NetworkResult.Error(errorMsg)
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                chatMessageDao.updateMessageStatus(userMsgId, status = "ERROR")
+                throw e
+            } catch (e: Exception) {
+                chatMessageDao.updateMessageStatus(userMsgId, status = "ERROR")
+                NetworkResult.Error("Network error: ${e.localizedMessage ?: "Connection failed"}", e)
+            }
         }
     }
 
