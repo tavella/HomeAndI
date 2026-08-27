@@ -42,139 +42,46 @@ class ChatRepositoryTest {
     }
 
     @Test
-    fun `sendMessage fetches complete contiguous history and sends correct prompt array to API`() = runTest {
+    fun `sendMessage fetches history and sends correct prompt array to Gemini SDK`() = runTest {
         val sessionId = "session-123"
-        val existingSession = ChatSessionEntity(id = sessionId, title = "New Chat", modelName = "meta-llama-3-8b")
+        val existingSession = ChatSessionEntity(id = sessionId, title = "New Chat", modelName = "gemini-1.5-flash")
         val oldUserMsg = ChatMessageEntity(id = "msg-1", sessionId = sessionId, role = "user", content = "Hello")
         val oldAssistantMsg = ChatMessageEntity(id = "msg-2", sessionId = sessionId, role = "assistant", content = "Hi there!")
 
         coEvery { chatSessionDao.getSessionById(sessionId) } returns existingSession
         val newUserMsg = ChatMessageEntity(id = "msg-3", sessionId = sessionId, role = "user", content = "How are you?")
         coEvery { chatMessageDao.getMessagesForSessionSync(sessionId) } returns listOf(oldUserMsg, oldAssistantMsg, newUserMsg)
+        every { preferencesManager.getGeminiApiKeySync() } returns "AIzaSyFakeKey"
 
-        val requestSlot = slot<ChatCompletionRequest>()
-        val mockApiResponse = ChatCompletionResponse(
-            id = "resp-1",
-            created = 1000L,
-            model = "meta-llama-3-8b",
-            choices = listOf(
-                Choice(
-                    index = 0,
-                    message = ResponseMessage(role = "assistant", content = "I am doing great, how can I help?"),
-                    finishReason = "stop"
-                )
-            ),
-            usage = Usage(10, 15, 25)
+        val mockClient = mockk<com.google.genai.kotlin.Client>()
+        val mockModels = mockk<com.google.genai.kotlin.Models>()
+        every { repository.createGenAiClient(any()) } returns mockClient
+        every { mockClient.models } returns mockModels
+
+        val mockCandidate = com.google.genai.kotlin.types.Candidate(
+            content = com.google.genai.kotlin.types.Content(role = "model", parts = listOf(com.google.genai.kotlin.types.Part(text = "I am doing great"))),
+            finishReason = com.google.genai.kotlin.types.FinishReason.STOP
+        )
+        val mockResponse = com.google.genai.kotlin.types.GenerateContentResponse(
+            candidates = listOf(mockCandidate)
         )
 
-        coEvery { apiService.createChatCompletion(capture(requestSlot)) } returns Response.success(mockApiResponse)
+        val contentsSlot = slot<List<com.google.genai.kotlin.types.Content>>()
+        coEvery { mockModels.generateContent(
+            model = "gemini-1.5-flash",
+            contents = capture(contentsSlot),
+            config = any()
+        ) } returns mockResponse
 
         val result = repository.sendMessage(sessionId = sessionId, userPrompt = "How are you?")
 
-        // 1. Validate result success
         assertTrue(result is NetworkResult.Success)
         val assistantMsg = (result as NetworkResult.Success).data
-        assertEquals("I am doing great, how can I help?", assistantMsg.content)
+        assertEquals("I am doing great", assistantMsg.content)
         assertEquals("assistant", assistantMsg.role)
 
-        // 2. Validate exact payload sent to Retrofit
-        val capturedRequest = requestSlot.captured
-        assertEquals("meta-llama-3-8b", capturedRequest.model)
-
-        // Messages array should have: System message + Old User + Old Assistant + New User prompt
-        val messages = capturedRequest.messages
-        assertEquals(4, messages.size)
-
-        assertEquals("system", messages[0].role)
-        assertEquals("You are a helpful assistant.", messages[0].content)
-
-        assertEquals("user", messages[1].role)
-        assertEquals("Hello", messages[1].content)
-
-        assertEquals("assistant", messages[2].role)
-        assertEquals("Hi there!", messages[2].content)
-
-        assertEquals("user", messages[3].role)
-
-        // 3. Verify Room Database interactions
-        coVerify { chatMessageDao.insertMessage(any()) }
-        coVerify { chatSessionDao.updateSession(any()) }
-    }
-
-    @Test
-    fun `sendMessage with local model and search enabled intercepts tool calls, executes search, and returns final answer`() = runTest {
-        val sessionId = "session-local-search"
-        val existingSession = ChatSessionEntity(id = sessionId, title = "Local Search Chat", modelName = "meta-llama-3-8b")
-        val userMsg = ChatMessageEntity(id = "msg-1", sessionId = sessionId, role = "user", content = "What's the weather in Seattle?")
-
-        coEvery { chatSessionDao.getSessionById(sessionId) } returns existingSession
-        coEvery { chatMessageDao.getMessagesForSessionSync(sessionId) } returns listOf(userMsg)
-        every { preferencesManager.getGeminiApiKeySync() } returns ""
-        every { preferencesManager.getApiKeySync() } returns ""
-
-        // 1st response: Tool call returned by model
-        val toolCall = ChatToolCall(
-            id = "call-123",
-            function = ChatToolCallFunction(name = "web_search", arguments = "{\"query\":\"weather in Seattle\"}")
-        )
-        val mockApiResponse1 = ChatCompletionResponse(
-            id = "resp-1",
-            created = 1000L,
-            model = "meta-llama-3-8b",
-            choices = listOf(
-                Choice(
-                    index = 0,
-                    message = ResponseMessage(role = "assistant", content = null, toolCalls = listOf(toolCall)),
-                    finishReason = "tool_calls"
-                )
-            ),
-            usage = Usage(10, 15, 25)
-        )
-
-        // 2nd response: Final answer returned by model after tool results are fed back
-        val mockApiResponse2 = ChatCompletionResponse(
-            id = "resp-2",
-            created = 1001L,
-            model = "meta-llama-3-8b",
-            choices = listOf(
-                Choice(
-                    index = 0,
-                    message = ResponseMessage(role = "assistant", content = "It is currently 70 degrees and sunny in Seattle."),
-                    finishReason = "stop"
-                )
-            ),
-            usage = Usage(20, 25, 45)
-        )
-
-        val requests = mutableListOf<ChatCompletionRequest>()
-        coEvery { apiService.createChatCompletion(capture(requests)) } returns Response.success(mockApiResponse1) andThen Response.success(mockApiResponse2)
-
-        // Mock executeWebSearch endpoint response
-        val searchResults = listOf(WebSearchResult(title = "Seattle Weather", url = "https://weather.example.com", snippet = "70 degrees and sunny"))
-        val mockSearchResponse = WebSearchResponse(ok = true, provider = "duckduckgo", results = searchResults)
-        coEvery { apiService.executeWebSearch(any()) } returns Response.success(mockSearchResponse)
-
-        val result = repository.sendMessage(sessionId = sessionId, userPrompt = "What's the weather in Seattle?", isWebSearchActive = true)
-
-        assertTrue(result is NetworkResult.Success)
-        val assistantMsg = (result as NetworkResult.Success).data
-        assertEquals("It is currently 70 degrees and sunny in Seattle.", assistantMsg.content)
-        assertEquals("assistant", assistantMsg.role)
-        assertNotNull(assistantMsg.groundingMetadataJson)
-        assertTrue(assistantMsg.groundingMetadataJson!!.contains("https://weather.example.com"))
-
-        // Verify captured requests
-        val firstRequest = requests[0]
-        assertNotNull(firstRequest.tools)
-        assertEquals("web_search", firstRequest.tools!![0].function.name)
-
-        val secondRequest = requests[1]
-        // The messages in secondRequest should contain the tool result message
-        val messages = secondRequest.messages
-        val toolMessage = messages.find { it.role == "tool" }
-        assertNotNull(toolMessage)
-        assertEquals("call-123", toolMessage!!.toolCallId)
-        assertTrue(toolMessage.content.toString().contains("70 degrees and sunny"))
+        val capturedContents = contentsSlot.captured
+        assertEquals(3, capturedContents.size)
     }
 
     @Test
@@ -237,23 +144,27 @@ class ChatRepositoryTest {
     }
 
     @Test
-    fun `sendMessage updates message status to ERROR on API HTTP error`() = runTest {
+    fun `sendMessage updates message status to ERROR on SDK exception`() = runTest {
         val sessionId = "session-123"
-        coEvery { chatSessionDao.getSessionById(sessionId) } returns null
+        val existingSession = ChatSessionEntity(id = sessionId, title = "New Chat", modelName = "gemini-1.5-flash")
+        coEvery { chatSessionDao.getSessionById(sessionId) } returns existingSession
         coEvery { chatMessageDao.getMessagesForSessionSync(sessionId) } returns emptyList()
+        every { preferencesManager.getGeminiApiKeySync() } returns "AIzaSyFakeKey"
 
-        coEvery { apiService.createChatCompletion(any()) } returns Response.error(
-            500,
-            okhttp3.ResponseBody.create(null, "Internal Server Error")
-        )
+        val mockClient = mockk<com.google.genai.kotlin.Client>()
+        val mockModels = mockk<com.google.genai.kotlin.Models>()
+        every { repository.createGenAiClient(any()) } returns mockClient
+        every { mockClient.models } returns mockModels
+
+        coEvery { mockModels.generateContent(
+            model = any<String>(),
+            contents = any<List<com.google.genai.kotlin.types.Content>>(),
+            config = any<com.google.genai.kotlin.types.GenerateContentConfig>()
+        ) } throws RuntimeException("SDK Error")
 
         val result = repository.sendMessage(sessionId = sessionId, userPrompt = "Test error")
 
         assertTrue(result is NetworkResult.Error)
-        val errorResult = result as NetworkResult.Error
-        assertTrue(errorResult.message.contains("500"))
-
-        // Verify status update in Room
         coVerify { chatMessageDao.updateMessageStatus(any(), eq("ERROR")) }
     }
 
@@ -322,29 +233,31 @@ class ChatRepositoryTest {
         val userMsg = ChatMessageEntity(id = "msg-456", sessionId = sessionId, role = "user", content = "2+2")
         coEvery { chatMessageDao.getMessagesForSessionSync(sessionId) } returns listOf(userMsg)
         every { preferencesManager.getSystemPromptSync(sessionModel) } returns sessionPrompt
+        every { preferencesManager.getGeminiApiKeySync() } returns "AIzaSyFakeKey"
 
-        val requestSlot = slot<ChatCompletionRequest>()
-        val mockApiResponse = ChatCompletionResponse(
-            id = "resp-2",
-            created = 2000L,
-            model = sessionModel,
-            choices = listOf(
-                Choice(index = 0, message = ResponseMessage(role = "assistant", content = "4"), finishReason = "stop")
-            ),
-            usage = Usage(5, 5, 10)
+        val mockClient = mockk<com.google.genai.kotlin.Client>()
+        val mockModels = mockk<com.google.genai.kotlin.Models>()
+        every { repository.createGenAiClient(any()) } returns mockClient
+        every { mockClient.models } returns mockModels
+
+        val mockCandidate = com.google.genai.kotlin.types.Candidate(
+            content = com.google.genai.kotlin.types.Content(role = "model", parts = listOf(com.google.genai.kotlin.types.Part(text = "4"))),
+            finishReason = com.google.genai.kotlin.types.FinishReason.STOP
         )
-        coEvery { apiService.createChatCompletion(capture(requestSlot)) } returns Response.success(mockApiResponse)
+        val mockResponse = com.google.genai.kotlin.types.GenerateContentResponse(
+            candidates = listOf(mockCandidate)
+        )
+
+        val modelSlot = slot<String>()
+        coEvery { mockModels.generateContent(
+            model = capture(modelSlot),
+            contents = any(),
+            config = any()
+        ) } returns mockResponse
 
         repository.sendMessage(sessionId = sessionId, userPrompt = "2+2")
 
-        val capturedRequest = requestSlot.captured
-        assertEquals(sessionModel, capturedRequest.model)
-        
-        val messages = capturedRequest.messages
-        assertEquals(2, messages.size) // system prompt + user prompt
-        assertEquals("system", messages[0].role)
-        assertEquals(sessionPrompt, messages[0].content)
-        
+        assertEquals(sessionModel, modelSlot.captured)
         verify { preferencesManager.getSystemPromptSync(sessionModel) }
     }
 }

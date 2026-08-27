@@ -135,207 +135,55 @@ open class ChatRepository(
             }
         }
 
-        val isGemini = model.contains("gemini", ignoreCase = true) ||
-                       preferencesManager.getApiKeySync().startsWith("AIzaSy") ||
-                       preferencesManager.getHostSync().contains("googleapis.com")
-
-        if (isGemini) {
-            val geminiApiKey = preferencesManager.getGeminiApiKeySync()
-            val sdkContents = convertToSdkContents(apiMessages)
-            
-            val searchTool = com.google.genai.kotlin.types.Tool(
-                googleSearch = com.google.genai.kotlin.types.GoogleSearch()
-            )
-            val sdkConfig = com.google.genai.kotlin.types.GenerateContentConfig(
-                tools = if (isWebSearchActive) listOf(searchTool) else null,
-                temperature = 0.7,
-                systemInstruction = if (systemPrompt.isNotBlank()) {
-                    com.google.genai.kotlin.types.Content(
-                        parts = listOf(com.google.genai.kotlin.types.Part(text = systemPrompt))
-                    )
-                } else null
-            )
-
-            try {
-                val sdkClient = createGenAiClient(geminiApiKey)
-                val response = sdkClient.models.generateContent(
-                    model = model,
-                    contents = sdkContents,
-                    config = sdkConfig
+        val geminiApiKey = preferencesManager.getGeminiApiKeySync()
+        val sdkContents = convertToSdkContents(apiMessages)
+        
+        val searchTool = com.google.genai.kotlin.types.Tool(
+            googleSearch = com.google.genai.kotlin.types.GoogleSearch()
+        )
+        val sdkConfig = com.google.genai.kotlin.types.GenerateContentConfig(
+            tools = if (isWebSearchActive) listOf(searchTool) else null,
+            temperature = 0.7,
+            systemInstruction = if (systemPrompt.isNotBlank()) {
+                com.google.genai.kotlin.types.Content(
+                    parts = listOf(com.google.genai.kotlin.types.Part(text = systemPrompt))
                 )
+            } else null
+        )
 
-                val assistantReplyText = response.text ?: "No content returned by Gemini."
-                val groundingMetadata = response.candidates?.firstOrNull()?.groundingMetadata
-                val groundingMetadataJson = if (groundingMetadata != null) {
-                    gson.toJson(groundingMetadata)
-                } else {
-                    null
-                }
-
-                val assistantMsg = ChatMessageEntity(
-                    id = UUID.randomUUID().toString(),
-                    sessionId = sessionId,
-                    role = "assistant",
-                    content = assistantReplyText,
-                    timestamp = System.currentTimeMillis(),
-                    status = "SENT",
-                    groundingMetadataJson = groundingMetadataJson
-                )
-                chatMessageDao.insertMessage(assistantMsg)
-                NetworkResult.Success(assistantMsg)
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                chatMessageDao.updateMessageStatus(userMsgId, status = "ERROR")
-                throw e
-            } catch (e: Exception) {
-                chatMessageDao.updateMessageStatus(userMsgId, status = "ERROR")
-                NetworkResult.Error("Network error: ${e.localizedMessage ?: "Connection failed"}", e)
-            }
-        } else {
-            val webSearchTool = ChatToolDefinition(
-                function = ChatFunctionDefinition(
-                    name = "web_search",
-                    description = "Search the web for real-time information (like date, time, weather, news, etc.).",
-                    parameters = ChatFunctionParameters(
-                        properties = mapOf(
-                            "query" to ChatFunctionProperty(
-                                type = "string",
-                                description = "The search query to look up on the web"
-                            )
-                        ),
-                        required = listOf("query")
-                    )
-                )
-            )
-            val tools = if (isWebSearchActive) listOf(webSearchTool) else null
-
-            // 4. Construct Retrofit Payload
-            val request = ChatCompletionRequest(
+        try {
+            val sdkClient = createGenAiClient(geminiApiKey)
+            val response = sdkClient.models.generateContent(
                 model = model,
-                messages = apiMessages,
-                temperature = 0.7,
-                tools = tools
+                contents = sdkContents,
+                config = sdkConfig
             )
 
-            // 5. Execute Network Call
-            try {
-                var currentRequest = request
-                var response = apiService.createChatCompletion(currentRequest)
-                var retryCount = 0
-                val maxRetries = 5
-                val allSearchResults = mutableListOf<WebSearchResult>()
-
-                while (response.isSuccessful && response.body() != null && retryCount < maxRetries) {
-                    val body = response.body()!!
-                    val choice = body.choices?.firstOrNull()
-                    val message = choice?.message
-                    
-                    if (message?.toolCalls != null && message.toolCalls.isNotEmpty()) {
-                        val mutableMessages = currentRequest.messages.toMutableList()
-                        
-                        // Append assistant message with tool calls to context
-                        mutableMessages.add(
-                            ApiMessage(
-                                role = "assistant",
-                                content = message.content ?: "",
-                                toolCalls = message.toolCalls
-                            )
-                        )
-                        
-                        for (toolCall in message.toolCalls) {
-                            if (toolCall.function.name == "web_search") {
-                                val argumentsJson = toolCall.function.arguments
-                                val arguments = try {
-                                    gson.fromJson(argumentsJson, Map::class.java)
-                                } catch (e: Exception) {
-                                    emptyMap<String, Any>()
-                                }
-                                val query = arguments["query"] as? String ?: userPrompt
-                                
-                                val searchResponse = apiService.executeWebSearch(WebSearchRequest(query))
-                                val searchResultContent = if (searchResponse.isSuccessful && searchResponse.body() != null) {
-                                    val searchBody = searchResponse.body()!!
-                                    if (searchBody.ok && searchBody.results != null) {
-                                        allSearchResults.addAll(searchBody.results)
-                                        val resultsBuilder = StringBuilder()
-                                        for (result in searchBody.results) {
-                                            resultsBuilder.append("Title: ").append(result.title).append("\n")
-                                                .append("URL: ").append(result.url).append("\n")
-                                                .append("Snippet: ").append(result.snippet).append("\n\n")
-                                        }
-                                        resultsBuilder.toString().trim()
-                                    } else {
-                                        "No search results returned."
-                                    }
-                                } else {
-                                    "Web search failed."
-                                }
-                                
-                                mutableMessages.add(
-                                    ApiMessage(
-                                        role = "tool",
-                                        content = searchResultContent,
-                                        toolCallId = toolCall.id,
-                                        name = toolCall.function.name
-                                    )
-                                )
-                            }
-                        }
-                        
-                        currentRequest = currentRequest.copy(messages = mutableMessages)
-                        response = apiService.createChatCompletion(currentRequest)
-                        retryCount++
-                    } else {
-                        break
-                    }
-                }
-
-                if (response.isSuccessful && response.body() != null) {
-                    val body = response.body()!!
-                    val assistantReplyText = body.choices?.firstOrNull()?.message?.content
-                        ?: "No content returned by HomeAndI."
-
-                    val groundingMetadataJson = if (allSearchResults.isNotEmpty()) {
-                        val chunks = allSearchResults.map { result ->
-                            GeminiGroundingChunk(
-                                web = GeminiWebSource(
-                                    uri = result.url ?: "",
-                                    title = result.title ?: ""
-                                )
-                            )
-                        }
-                        val metadata = GeminiGroundingMetadata(
-                            webSearchQueries = listOf(userPrompt),
-                            groundingChunks = chunks,
-                            searchEntryPoint = null
-                        )
-                        gson.toJson(metadata)
-                    } else {
-                        null
-                    }
-
-                    val assistantMsg = ChatMessageEntity(
-                        id = UUID.randomUUID().toString(),
-                        sessionId = sessionId,
-                        role = "assistant",
-                        content = assistantReplyText,
-                        timestamp = System.currentTimeMillis(),
-                        status = "SENT",
-                        groundingMetadataJson = groundingMetadataJson
-                    )
-                    chatMessageDao.insertMessage(assistantMsg)
-                    NetworkResult.Success(assistantMsg)
-                } else {
-                    val errorMsg = "HTTP ${response.code()}: ${response.errorBody()?.string() ?: response.message()}"
-                    chatMessageDao.updateMessageStatus(userMsgId, status = "ERROR")
-                    NetworkResult.Error(errorMsg)
-                }
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                chatMessageDao.updateMessageStatus(userMsgId, status = "ERROR")
-                throw e
-            } catch (e: Exception) {
-                chatMessageDao.updateMessageStatus(userMsgId, status = "ERROR")
-                NetworkResult.Error("Network error: ${e.localizedMessage ?: "Connection failed"}", e)
+            val assistantReplyText = response.text ?: "No content returned by Gemini."
+            val groundingMetadata = response.candidates?.firstOrNull()?.groundingMetadata
+            val groundingMetadataJson = if (groundingMetadata != null) {
+                gson.toJson(groundingMetadata)
+            } else {
+                null
             }
+
+            val assistantMsg = ChatMessageEntity(
+                id = UUID.randomUUID().toString(),
+                sessionId = sessionId,
+                role = "assistant",
+                content = assistantReplyText,
+                timestamp = System.currentTimeMillis(),
+                status = "SENT",
+                groundingMetadataJson = groundingMetadataJson
+            )
+            chatMessageDao.insertMessage(assistantMsg)
+            NetworkResult.Success(assistantMsg)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            chatMessageDao.updateMessageStatus(userMsgId, status = "ERROR")
+            throw e
+        } catch (e: Exception) {
+            chatMessageDao.updateMessageStatus(userMsgId, status = "ERROR")
+            NetworkResult.Error("Network error: ${e.localizedMessage ?: "Connection failed"}", e)
         }
     }
 

@@ -56,8 +56,4 @@ interface HomeAndIApiService {
         @Body request: GeminiGenerateContentRequest
     ): Response<GeminiGenerateContentResponse>
 
-    @POST("v1/web/search")
-    suspend fun executeWebSearch(
-        @Body request: WebSearchRequest
-    ): Response<WebSearchResponse>
 }
