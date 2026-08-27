@@ -16,6 +16,8 @@ data class ChatScreenState(
     val sessions: List<ChatSessionEntity> = emptyList(),
     val messages: List<ChatMessageEntity> = emptyList(),
     val isGenerating: Boolean = false,
+    val isAnySessionGenerating: Boolean = false,
+    val generatingSessionId: String? = null,
     val errorMessage: String? = null,
     val pendingAttachments: List<String> = emptyList(),
     val viewingAttachment: String? = null,

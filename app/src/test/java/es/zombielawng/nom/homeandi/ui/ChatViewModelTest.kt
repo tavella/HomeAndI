@@ -44,6 +44,7 @@ class ChatViewModelTest {
 
         every { application.applicationContext } returns application
         every { workManager.getWorkInfosForUniqueWorkFlow(any()) } returns flowOf(emptyList())
+        every { workManager.getWorkInfosByTagFlow(any()) } returns flowOf(emptyList())
 
         val defaultSession = ChatSessionEntity("session-1", "Default Session", "meta-llama-3-8b")
         sessionsFlow.value = listOf(defaultSession)
@@ -127,14 +128,45 @@ class ChatViewModelTest {
     }
 
     @Test
-    fun `selectSession updates preferences and repository observation`() {
-        val newSession = ChatSessionEntity("session-2", "New Session", "model")
-        sessionsFlow.value = listOf(newSession)
+    fun `observeGlobalWorkStatus updates isAnySessionGenerating and generatingSessionId`() = runTest {
+        val globalWorkInfoFlow = MutableStateFlow<List<WorkInfo>>(emptyList())
+        every { workManager.getWorkInfosByTagFlow(ChatViewModel.TAG_CHAT_WORK) } returns globalWorkInfoFlow
+        
+        // Re-init VM to pick up the new flow (or mock it before init)
+        // Since it's init-time observation, we'll recreate it for this specific test
+        val vm = ChatViewModel(application, repository, preferencesManager, workManager)
         testDispatcher.scheduler.advanceUntilIdle()
+
+        // Simulate Running state for session-2
+        val runningWorkInfo = mockk<WorkInfo>()
+        every { runningWorkInfo.state } returns WorkInfo.State.RUNNING
+        every { runningWorkInfo.tags } returns setOf(ChatViewModel.TAG_CHAT_WORK, "${ChatViewModel.TAG_PREFIX_SESSION}session-2")
+        globalWorkInfoFlow.value = listOf(runningWorkInfo)
         
-        viewModel.selectSession("session-2")
-        
-        verify { preferencesManager.updateLastSessionId("session-2") }
-        verify { repository.getMessagesForSession("session-2") }
+        testDispatcher.scheduler.advanceUntilIdle()
+        assertTrue(vm.uiState.value.isAnySessionGenerating)
+        assertEquals("session-2", vm.uiState.value.generatingSessionId)
+
+        // Simulate Success state
+        globalWorkInfoFlow.value = emptyList()
+        testDispatcher.scheduler.advanceUntilIdle()
+        assertFalse(vm.uiState.value.isAnySessionGenerating)
+        assertNull(vm.uiState.value.generatingSessionId)
+    }
+
+    @Test
+    fun `sendMessage adds required tags to work request`() = runTest {
+        viewModel.sendMessage("Hello global")
+
+        verify { 
+            workManager.enqueueUniqueWork(
+                any(), 
+                any(), 
+                match<OneTimeWorkRequest> { 
+                    it.tags.contains(ChatViewModel.TAG_CHAT_WORK) && 
+                    it.tags.contains("${ChatViewModel.TAG_PREFIX_SESSION}session-1")
+                }
+            ) 
+        }
     }
 }

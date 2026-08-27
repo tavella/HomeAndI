@@ -105,7 +105,7 @@ fun ChatScreen(
         cameraLauncher.launch(uri)
     }
 
-    val permissionLauncher = rememberLauncherForActivityResult(
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission(),
         onResult = { isGranted ->
             if (isGranted) {
@@ -114,11 +114,16 @@ fun ChatScreen(
         }
     )
 
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+        onResult = { /* No-op */ }
+    )
+
     fun checkAndLaunchCamera() {
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
             launchCamera()
         } else {
-            permissionLauncher.launch(Manifest.permission.CAMERA)
+            cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
         }
     }
 
@@ -126,7 +131,7 @@ fun ChatScreen(
     LaunchedEffect(Unit) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-                permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
             }
         }
     }
@@ -290,7 +295,7 @@ fun ChatScreen(
                             )
                         }
 
-                        if (state.isGenerating) {
+                        if (state.isAnySessionGenerating) {
                             item {
                                 Row(
                                     modifier = Modifier
@@ -305,7 +310,11 @@ fun ChatScreen(
                                     )
                                     Spacer(modifier = Modifier.width(12.dp))
                                     Text(
-                                        text = "HomeAndI is thinking...",
+                                        text = if (state.activeSession?.id == state.generatingSessionId) {
+                                            "HomeAndI is thinking..."
+                                        } else {
+                                            "Another conversation is currently in progress. Please wait until it has finished."
+                                        },
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.primary
                                     )
@@ -315,7 +324,7 @@ fun ChatScreen(
                     }
 
                     // Top linear progress indicator for better visibility
-                    if (state.isGenerating) {
+                    if (state.isAnySessionGenerating) {
                         LinearProgressIndicator(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -398,7 +407,7 @@ fun ChatScreen(
                                     val native = keyEvent.nativeKeyEvent
                                     val keyCode = native.keyCode
                                     // 66 = Enter, 160 = NumPad Enter, 10 = LineFeed
-                                    val isEnter = keyCode == 66 || keyCode == 160 || keyCode == 10
+                                    val isEnter = (keyCode == 66 || keyCode == 160 || keyCode == 10)
                                     
                                     if (isEnter) {
                                         // Simulator-friendly modifier check (metaState bits + high level helpers)
@@ -420,7 +429,7 @@ fun ChatScreen(
                                                 )
                                             } else {
                                                 // Plain Enter -> Send
-                                                if (!state.isGenerating && (inputTextFieldValue.text.isNotBlank() || state.pendingAttachments.isNotEmpty())) {
+                                                if (!state.isAnySessionGenerating && (inputTextFieldValue.text.isNotBlank() || state.pendingAttachments.isNotEmpty())) {
                                                     viewModel.sendMessage(inputTextFieldValue.text)
                                                     inputTextFieldValue = TextFieldValue("")
                                                 }
@@ -447,7 +456,7 @@ fun ChatScreen(
                                 viewModel.sendMessage(inputTextFieldValue.text)
                                 inputTextFieldValue = TextFieldValue("")
                             },
-                            enabled = !state.isGenerating && (inputTextFieldValue.text.isNotBlank() || state.pendingAttachments.isNotEmpty()),
+                            enabled = !state.isAnySessionGenerating && (inputTextFieldValue.text.isNotBlank() || state.pendingAttachments.isNotEmpty()),
                             colors = IconButtonDefaults.iconButtonColors(
                                 containerColor = MaterialTheme.colorScheme.primary,
                                 contentColor = MaterialTheme.colorScheme.onPrimary,
