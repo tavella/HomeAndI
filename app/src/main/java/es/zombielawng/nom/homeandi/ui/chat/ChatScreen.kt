@@ -1,5 +1,7 @@
 package es.zombielawng.nom.homeandi.ui.chat
 
+import androidx.compose.ui.graphics.toArgb
+
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -136,8 +138,8 @@ fun ChatScreen(
         }
     }
 
-    // Dynamic screenshot capturing effect on message updates
     val view = androidx.compose.ui.platform.LocalView.current
+    val currentThemeBackground = MaterialTheme.colorScheme.background
     LaunchedEffect(state.messages.size, state.isGenerating) {
         if (state.isScreenshotsEnabled && state.messages.isNotEmpty() && !state.isGenerating) {
             kotlinx.coroutines.delay(800)
@@ -145,6 +147,7 @@ fun ChatScreen(
                 try {
                     val bitmap = android.graphics.Bitmap.createBitmap(view.width, view.height, android.graphics.Bitmap.Config.ARGB_8888)
                     val canvas = android.graphics.Canvas(bitmap)
+                    canvas.drawColor(currentThemeBackground.toArgb())
                     view.draw(canvas)
                     val thumbnail = android.graphics.Bitmap.createScaledBitmap(bitmap, 90, 120, true)
                     val file = java.io.File(context.filesDir, "screenshot_${state.activeSession?.id}.png")
