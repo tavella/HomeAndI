@@ -22,5 +22,7 @@ data class ChatScreenState(
     val pendingAttachments: List<String> = emptyList(),
     val viewingAttachment: String? = null,
     val loadedModels: List<ModelData> = emptyList(),
-    val isScreenshotsEnabled: Boolean = true
+    val isScreenshotsEnabled: Boolean = true,
+    val isWebSearchActive: Boolean = false,
+    val isWebSearchEnabled: Boolean = false
 )

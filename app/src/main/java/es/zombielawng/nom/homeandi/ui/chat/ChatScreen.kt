@@ -424,6 +424,17 @@ fun ChatScreen(
                             )
                         }
 
+                        // Web Search Toggle
+                        if (state.isWebSearchEnabled) {
+                            IconButton(onClick = { viewModel.toggleWebSearch() }) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Language,
+                                    contentDescription = "Toggle Web Search",
+                                    tint = if (state.isWebSearchActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+                                )
+                            }
+                        }
+
                         // Text Prompt Input
                         OutlinedTextField(
                             value = inputTextFieldValue,

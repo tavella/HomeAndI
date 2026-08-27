@@ -68,7 +68,8 @@ class ChatRepository(
     suspend fun sendMessage(
         sessionId: String,
         userPrompt: String,
-        attachmentPaths: List<String> = emptyList()
+        attachmentPaths: List<String> = emptyList(),
+        isWebSearchActive: Boolean = false
     ): NetworkResult<ChatMessageEntity> = withContext(Dispatchers.IO) {
         val userMsgId = UUID.randomUUID().toString()
         val attachmentJson = gson.toJson(attachmentPaths)
@@ -112,13 +113,23 @@ class ChatRepository(
             apiMessages.add(ApiMessage(role = "system", content = systemPrompt))
         }
 
-        for (entity in historyEntities) {
+        val lastIdx = historyEntities.lastIndex
+        for (i in historyEntities.indices) {
+            val entity = historyEntities[i]
+            val isCurrentUserMessage = (i == lastIdx && entity.role == "user")
+            
+            val contentToSend: Any = if (isCurrentUserMessage && isWebSearchActive) {
+                val searchResults = performWebSearch(userPrompt)
+                "[Web Search Results Context]\n$searchResults\n\n[User Prompt]\n${entity.content}"
+            } else {
+                entity.content
+            }
+
             val parts = parseAttachments(entity.attachmentPathsJson)
             if (parts.isNotEmpty() && entity.role == "user") {
-                // Multimodal input formatting
                 val contentParts = mutableListOf<Any>()
-                if (entity.content.isNotBlank()) {
-                    contentParts.add(TextContentPart(text = entity.content))
+                if (contentToSend is String && contentToSend.isNotBlank()) {
+                    contentParts.add(TextContentPart(text = contentToSend))
                 }
                 for (path in parts) {
                     val dataUrl = ImageUtils.pathToBase64DataUrl(context, path)
@@ -126,8 +137,7 @@ class ChatRepository(
                 }
                 apiMessages.add(ApiMessage(role = entity.role, content = contentParts))
             } else {
-                // Standard text message
-                apiMessages.add(ApiMessage(role = entity.role, content = entity.content))
+                apiMessages.add(ApiMessage(role = entity.role, content = contentToSend))
             }
         }
 
@@ -371,6 +381,137 @@ class ChatRepository(
             gson.fromJson(json, type) ?: emptyList()
         } catch (e: Exception) {
             emptyList()
+        }
+    }
+
+    private suspend fun performWebSearch(query: String): String = withContext(Dispatchers.IO) {
+        val provider = preferencesManager.getSearchProviderSync()
+        try {
+            when (provider) {
+                "google" -> {
+                    val apiKey = preferencesManager.getGoogleApiKeySync()
+                    val cx = preferencesManager.getGoogleCxSync()
+                    if (apiKey.isBlank() || cx.isBlank()) {
+                        return@withContext "Error: Google search API Key or Search Engine ID is missing in settings."
+                    }
+                    val encodedQuery = java.net.URLEncoder.encode(query, "UTF-8")
+                    val urlStr = "https://www.googleapis.com/customsearch/v1?key=$apiKey&cx=$cx&q=$encodedQuery"
+                    val connection = java.net.URL(urlStr).openConnection() as java.net.HttpURLConnection
+                    connection.requestMethod = "GET"
+                    connection.setRequestProperty("User-Agent", "Mozilla/5.0")
+                    connection.connect()
+                    if (connection.responseCode == 200) {
+                        val responseText = connection.inputStream.bufferedReader().use { it.readText() }
+                        val json = com.google.gson.JsonParser.parseString(responseText).asJsonObject
+                        val items = json.getAsJsonArray("items")
+                        if (items != null && items.size() > 0) {
+                            val results = StringBuilder()
+                            var count = 0
+                            for (element in items) {
+                                if (count >= 3) break
+                                val item = element.asJsonObject
+                                val title = item.get("title")?.asString ?: ""
+                                val link = item.get("link")?.asString ?: ""
+                                val snippet = item.get("snippet")?.asString ?: ""
+                                results.append("Title: ").append(title).append("\n")
+                                       .append("URL: ").append(link).append("\n")
+                                       .append("Snippet: ").append(snippet).append("\n\n")
+                                count++
+                            }
+                            results.toString().trim()
+                        } else {
+                            "No search results returned from Google."
+                        }
+                    } else {
+                        "Google Search returned HTTP error ${connection.responseCode}"
+                    }
+                }
+                "bing" -> {
+                    val apiKey = preferencesManager.getBingApiKeySync()
+                    if (apiKey.isBlank()) {
+                        return@withContext "Error: Bing search API Key is missing in settings."
+                    }
+                    val encodedQuery = java.net.URLEncoder.encode(query, "UTF-8")
+                    val urlStr = "https://api.bing.microsoft.com/v7.0/search?q=$encodedQuery"
+                    val connection = java.net.URL(urlStr).openConnection() as java.net.HttpURLConnection
+                    connection.requestMethod = "GET"
+                    connection.setRequestProperty("Ocp-Apim-Subscription-Key", apiKey)
+                    connection.setRequestProperty("User-Agent", "Mozilla/5.0")
+                    connection.connect()
+                    if (connection.responseCode == 200) {
+                        val responseText = connection.inputStream.bufferedReader().use { it.readText() }
+                        val json = com.google.gson.JsonParser.parseString(responseText).asJsonObject
+                        val webPages = json.getAsJsonObject("webPages")
+                        val value = webPages?.getAsJsonArray("value")
+                        if (value != null && value.size() > 0) {
+                            val results = StringBuilder()
+                            var count = 0
+                            for (element in value) {
+                                if (count >= 3) break
+                                val item = element.asJsonObject
+                                val title = item.get("name")?.asString ?: ""
+                                val link = item.get("url")?.asString ?: ""
+                                val snippet = item.get("snippet")?.asString ?: ""
+                                results.append("Title: ").append(title).append("\n")
+                                       .append("URL: ").append(link).append("\n")
+                                       .append("Snippet: ").append(snippet).append("\n\n")
+                                count++
+                            }
+                            results.toString().trim()
+                        } else {
+                            "No search results returned from Bing."
+                        }
+                    } else {
+                        "Bing Search returned HTTP error ${connection.responseCode}"
+                    }
+                }
+                else -> { // duckduckgo
+                    val encodedQuery = java.net.URLEncoder.encode(query, "UTF-8")
+                    val urlStr = "https://api.duckduckgo.com/?q=$encodedQuery&format=json&no_html=1"
+                    val connection = java.net.URL(urlStr).openConnection() as java.net.HttpURLConnection
+                    connection.requestMethod = "GET"
+                    connection.setRequestProperty("User-Agent", "Mozilla/5.0")
+                    connection.connect()
+                    if (connection.responseCode == 200) {
+                        val responseText = connection.inputStream.bufferedReader().use { it.readText() }
+                        val json = com.google.gson.JsonParser.parseString(responseText).asJsonObject
+                        val abstractText = json.get("AbstractText")?.asString ?: ""
+                        val results = StringBuilder()
+                        if (abstractText.isNotBlank()) {
+                            results.append("Title: ").append(json.get("Heading")?.asString ?: query).append("\n")
+                                   .append("URL: ").append(json.get("AbstractURL")?.asString ?: "").append("\n")
+                                   .append("Snippet: ").append(abstractText).append("\n\n")
+                        }
+                        val relatedTopics = json.getAsJsonArray("RelatedTopics")
+                        if (relatedTopics != null) {
+                            var count = 0
+                            for (element in relatedTopics) {
+                                if (count >= 2) break
+                                if (element.isJsonObject) {
+                                    val item = element.asJsonObject
+                                    val text = item.get("Text")?.asString ?: ""
+                                    val firstLink = item.get("FirstURL")?.asString ?: ""
+                                    if (text.isNotBlank()) {
+                                        results.append("Title: Related Topic\n")
+                                               .append("URL: ").append(firstLink).append("\n")
+                                               .append("Snippet: ").append(text).append("\n\n")
+                                        count++
+                                    }
+                                }
+                            }
+                        }
+                        if (results.isNotEmpty()) {
+                            results.toString().trim()
+                        } else {
+                            "No search results returned from DuckDuckGo."
+                        }
+                    } else {
+                        "DuckDuckGo returned HTTP error ${connection.responseCode}"
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            "Error performing web search: ${e.localizedMessage}"
         }
     }
 }

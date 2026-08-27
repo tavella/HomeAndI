@@ -28,10 +28,13 @@ class ChatWorker(
 
         setForeground(createForegroundInfo())
 
+        val isWebSearchActive = inputData.getBoolean(KEY_WEB_SEARCH_ACTIVE, false)
+
         val result = repository.sendMessage(
             sessionId = sessionId,
             userPrompt = userPrompt,
-            attachmentPaths = attachmentPaths
+            attachmentPaths = attachmentPaths,
+            isWebSearchActive = isWebSearchActive
         )
 
         when (result) {
@@ -78,12 +81,14 @@ class ChatWorker(
         const val KEY_USER_PROMPT = "user_prompt"
         const val KEY_ATTACHMENTS = "attachments"
         const val KEY_ERROR_MESSAGE = "error_message"
+        const val KEY_WEB_SEARCH_ACTIVE = "web_search_active"
 
-        fun enqueue(context: Context, sessionId: String, userPrompt: String, attachments: List<String>) {
+        fun enqueue(context: Context, sessionId: String, userPrompt: String, attachments: List<String>, isWebSearchActive: Boolean) {
             val data = workDataOf(
                 KEY_SESSION_ID to sessionId,
                 KEY_USER_PROMPT to userPrompt,
-                KEY_ATTACHMENTS to attachments.toTypedArray()
+                KEY_ATTACHMENTS to attachments.toTypedArray(),
+                KEY_WEB_SEARCH_ACTIVE to isWebSearchActive
             )
 
             val request = OneTimeWorkRequestBuilder<ChatWorker>()

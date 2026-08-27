@@ -46,6 +46,16 @@ class ChatViewModel(
                 _uiState.update { it.copy(isScreenshotsEnabled = enabled) }
             }
         }
+        viewModelScope.launch {
+            preferencesManager.webSearchEnabledFlow.collect { enabled ->
+                _uiState.update { 
+                    it.copy(
+                        isWebSearchEnabled = enabled,
+                        isWebSearchActive = if (enabled) it.isWebSearchActive else false
+                    ) 
+                }
+            }
+        }
     }
 
     private fun observeSessions() {
@@ -248,6 +258,10 @@ class ChatViewModel(
         _uiState.update { it.copy(isGenerating = false, isAnySessionGenerating = false, generatingSessionId = null) }
     }
 
+    fun toggleWebSearch() {
+        _uiState.update { it.copy(isWebSearchActive = !it.isWebSearchActive) }
+    }
+
     fun addAttachment(path: String) {
         if (path.isBlank()) return
         _uiState.update { state ->
@@ -282,7 +296,8 @@ class ChatViewModel(
         val data = androidx.work.workDataOf(
             ChatWorker.KEY_SESSION_ID to currentSession.id,
             ChatWorker.KEY_USER_PROMPT to userText,
-            ChatWorker.KEY_ATTACHMENTS to attachments.toTypedArray()
+            ChatWorker.KEY_ATTACHMENTS to attachments.toTypedArray(),
+            ChatWorker.KEY_WEB_SEARCH_ACTIVE to _uiState.value.isWebSearchActive
         )
 
         val request = androidx.work.OneTimeWorkRequestBuilder<ChatWorker>()

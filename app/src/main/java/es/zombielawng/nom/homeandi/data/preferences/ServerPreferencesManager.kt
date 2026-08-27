@@ -35,6 +35,21 @@ class ServerPreferencesManager(context: Context) {
     private val _screenshotsEnabledFlow = MutableStateFlow(getScreenshotsEnabledSync())
     val screenshotsEnabledFlow: Flow<Boolean> = _screenshotsEnabledFlow.asStateFlow()
 
+    private val _webSearchEnabledFlow = MutableStateFlow(getWebSearchEnabledSync())
+    val webSearchEnabledFlow: Flow<Boolean> = _webSearchEnabledFlow.asStateFlow()
+
+    private val _searchProviderFlow = MutableStateFlow(getSearchProviderSync())
+    val searchProviderFlow: Flow<String> = _searchProviderFlow.asStateFlow()
+
+    private val _googleApiKeyFlow = MutableStateFlow(getGoogleApiKeySync())
+    val googleApiKeyFlow: Flow<String> = _googleApiKeyFlow.asStateFlow()
+
+    private val _googleCxFlow = MutableStateFlow(getGoogleCxSync())
+    val googleCxFlow: Flow<String> = _googleCxFlow.asStateFlow()
+
+    private val _bingApiKeyFlow = MutableStateFlow(getBingApiKeySync())
+    val bingApiKeyFlow: Flow<String> = _bingApiKeyFlow.asStateFlow()
+
     fun getHostSync(): String {
         return prefs.getString(KEY_HOST, DEFAULT_HOST) ?: DEFAULT_HOST
     }
@@ -132,6 +147,51 @@ class ServerPreferencesManager(context: Context) {
         _screenshotsEnabledFlow.value = enabled
     }
 
+    fun getWebSearchEnabledSync(): Boolean {
+        return prefs.getBoolean(KEY_WEB_SEARCH_ENABLED, false)
+    }
+
+    fun updateWebSearchEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_WEB_SEARCH_ENABLED, enabled).apply()
+        _webSearchEnabledFlow.value = enabled
+    }
+
+    fun getSearchProviderSync(): String {
+        return prefs.getString(KEY_SEARCH_PROVIDER, "google") ?: "google"
+    }
+
+    fun updateSearchProvider(provider: String) {
+        prefs.edit().putString(KEY_SEARCH_PROVIDER, provider).apply()
+        _searchProviderFlow.value = provider
+    }
+
+    fun getGoogleApiKeySync(): String {
+        return prefs.getString(KEY_GOOGLE_API_KEY, "") ?: ""
+    }
+
+    fun updateGoogleApiKey(key: String) {
+        prefs.edit().putString(KEY_GOOGLE_API_KEY, key.trim()).apply()
+        _googleApiKeyFlow.value = key.trim()
+    }
+
+    fun getGoogleCxSync(): String {
+        return prefs.getString(KEY_GOOGLE_CX, "") ?: ""
+    }
+
+    fun updateGoogleCx(cx: String) {
+        prefs.edit().putString(KEY_GOOGLE_CX, cx.trim()).apply()
+        _googleCxFlow.value = cx.trim()
+    }
+
+    fun getBingApiKeySync(): String {
+        return prefs.getString(KEY_BING_API_KEY, "") ?: ""
+    }
+
+    fun updateBingApiKey(key: String) {
+        prefs.edit().putString(KEY_BING_API_KEY, key.trim()).apply()
+        _bingApiKeyFlow.value = key.trim()
+    }
+
     companion object {
         const val KEY_HOST = "server_host"
         const val KEY_PORT = "server_port"
@@ -143,6 +203,11 @@ class ServerPreferencesManager(context: Context) {
         const val KEY_LAST_SESSION = "last_session_id"
         const val KEY_SCREENSHOTS_ENABLED = "screenshots_enabled"
         const val KEY_THEME_SELECTION = "theme_selection"
+        const val KEY_WEB_SEARCH_ENABLED = "web_search_enabled"
+        const val KEY_SEARCH_PROVIDER = "search_provider"
+        const val KEY_GOOGLE_API_KEY = "google_api_key"
+        const val KEY_GOOGLE_CX = "google_cx"
+        const val KEY_BING_API_KEY = "bing_api_key"
 
         const val DEFAULT_HOST = "10.0.2.2" // Emulator default targeting host machine
         const val DEFAULT_PORT = 8000

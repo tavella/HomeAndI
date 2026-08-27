@@ -27,7 +27,12 @@ data class SettingsUiState(
     val isModelActionLoading: Boolean = false,
     val modelActionMessage: String? = null,
     val isScreenshotsEnabled: Boolean = true,
-    val themeMode: String = "system"
+    val themeMode: String = "system",
+    val isWebSearchEnabled: Boolean = false,
+    val searchProvider: String = "google",
+    val googleApiKey: String = "",
+    val googleCx: String = "",
+    val bingApiKey: String = ""
 )
 
 class SettingsViewModel(
@@ -54,7 +59,12 @@ class SettingsViewModel(
                 systemPrompt = preferencesManager.getSystemPromptSync(model),
                 isDarkMode = preferencesManager.getDarkModeSync(),
                 isScreenshotsEnabled = preferencesManager.getScreenshotsEnabledSync(),
-                themeMode = preferencesManager.getThemeModeSync()
+                themeMode = preferencesManager.getThemeModeSync(),
+                isWebSearchEnabled = preferencesManager.getWebSearchEnabledSync(),
+                searchProvider = preferencesManager.getSearchProviderSync(),
+                googleApiKey = preferencesManager.getGoogleApiKeySync(),
+                googleCx = preferencesManager.getGoogleCxSync(),
+                bingApiKey = preferencesManager.getBingApiKeySync()
             )
         }
     }
@@ -67,6 +77,31 @@ class SettingsViewModel(
     fun updateThemeMode(mode: String) {
         _uiState.update { it.copy(themeMode = mode) }
         preferencesManager.updateThemeMode(mode)
+    }
+
+    fun updateWebSearchEnabled(enabled: Boolean) {
+        _uiState.update { it.copy(isWebSearchEnabled = enabled) }
+        preferencesManager.updateWebSearchEnabled(enabled)
+    }
+
+    fun updateSearchProvider(provider: String) {
+        _uiState.update { it.copy(searchProvider = provider) }
+        preferencesManager.updateSearchProvider(provider)
+    }
+
+    fun updateGoogleApiKey(key: String) {
+        _uiState.update { it.copy(googleApiKey = key) }
+        preferencesManager.updateGoogleApiKey(key)
+    }
+
+    fun updateGoogleCx(cx: String) {
+        _uiState.update { it.copy(googleCx = cx) }
+        preferencesManager.updateGoogleCx(cx)
+    }
+
+    fun updateBingApiKey(key: String) {
+        _uiState.update { it.copy(bingApiKey = key) }
+        preferencesManager.updateBingApiKey(key)
     }
 
     fun updateHost(host: String) {
