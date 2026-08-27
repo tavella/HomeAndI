@@ -5,11 +5,11 @@ plugins {
 }
 
 android {
-    namespace = "com.example.lmstudioclient"
+    namespace = "es.zombielawng.nom.homeandi"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.homeandi"
+        applicationId = "es.zombielawng.nom.homeandi"
         minSdk = 24
         targetSdk = 35
         versionCode = 1
