@@ -14,8 +14,14 @@ import androidx.compose.material.icons.rounded.Android
 import androidx.compose.material.icons.rounded.Error
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.runtime.*
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalClipboardManager
+import android.widget.Toast
+import kotlinx.coroutines.launch
+import es.zombielawng.nom.homeandi.util.FileDownloadHelper
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -37,6 +43,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ChatBubble(
     message: ChatMessageEntity,
@@ -67,6 +74,11 @@ fun ChatBubble(
     val formattedTime = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(message.timestamp))
     val attachments = parseAttachments(message.attachmentPathsJson)
 
+    var showMenu by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val clipboardManager = LocalClipboardManager.current
+    val scope = rememberCoroutineScope()
+
     Box(
         modifier = modifier
             .fillMaxWidth()
@@ -95,61 +107,137 @@ fun ChatBubble(
                 Spacer(modifier = Modifier.width(8.dp))
             }
 
-            Surface(
-                shape = bubbleShape,
-                color = bubbleBg,
-                shadowElevation = 1.dp
-            ) {
-                Column(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)
+            Box {
+                Surface(
+                    shape = bubbleShape,
+                    color = bubbleBg,
+                    shadowElevation = 1.dp,
+                    modifier = Modifier.combinedClickable(
+                        onClick = {},
+                        onLongClick = { showMenu = true }
+                    )
                 ) {
-                    if (attachments.isNotEmpty()) {
-                        LazyRow(
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
-                            modifier = Modifier.padding(bottom = 8.dp)
-                        ) {
-                            items(attachments) { path ->
-                                AsyncImage(
-                                    model = path,
-                                    contentDescription = "Attachment Thumbnail",
-                                    modifier = Modifier
-                                        .size(100.dp)
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .clickable { onAttachmentClick(path) },
-                                    contentScale = ContentScale.Crop
-                                )
+                    Column(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)
+                    ) {
+                        if (attachments.isNotEmpty()) {
+                            LazyRow(
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                modifier = Modifier.padding(bottom = 8.dp)
+                            ) {
+                                items(attachments) { path ->
+                                    AsyncImage(
+                                        model = path,
+                                        contentDescription = "Attachment Thumbnail",
+                                        modifier = Modifier
+                                            .size(100.dp)
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .clickable { onAttachmentClick(path) },
+                                        contentScale = ContentScale.Crop
+                                    )
+                                }
                             }
                         }
-                    }
 
-                    // Rich Text & Markdown Rendering
-                    MarkdownMessage(
-                        text = message.content,
-                        contentColor = contentColor
-                    )
-
-                    Spacer(modifier = Modifier.height(4.dp))
-
-                    Row(
-                        horizontalArrangement = Arrangement.End,
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.align(Alignment.End)
-                    ) {
-                        if (message.status == "ERROR") {
-                            Icon(
-                                imageVector = Icons.Rounded.Error,
-                                contentDescription = "Error Sending",
-                                tint = MaterialTheme.colorScheme.error,
-                                modifier = Modifier.size(14.dp)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                        }
-
-                        Text(
-                            text = formattedTime,
-                            fontSize = 10.sp,
-                            color = contentColor.copy(alpha = 0.6f)
+                        // Rich Text & Markdown Rendering
+                        MarkdownMessage(
+                            text = message.content,
+                            contentColor = contentColor
                         )
+
+                        Spacer(modifier = Modifier.height(4.dp))
+
+                        Row(
+                            horizontalArrangement = Arrangement.End,
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.align(Alignment.End)
+                        ) {
+                            if (message.status == "ERROR") {
+                                Icon(
+                                    imageVector = Icons.Rounded.Error,
+                                    contentDescription = "Error Sending",
+                                    tint = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                            }
+
+                            Text(
+                                text = formattedTime,
+                                fontSize = 10.sp,
+                                color = contentColor.copy(alpha = 0.6f)
+                            )
+                        }
+                    }
+                }
+
+                DropdownMenu(
+                    expanded = showMenu,
+                    onDismissRequest = { showMenu = false }
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("Copy Text") },
+                        onClick = {
+                            clipboardManager.setText(AnnotatedString(message.content))
+                            Toast.makeText(context, "Text copied", Toast.LENGTH_SHORT).show()
+                            showMenu = false
+                        }
+                    )
+                    if (attachments.isNotEmpty()) {
+                        DropdownMenuItem(
+                            text = { Text("Copy Attachment URI(s)") },
+                            onClick = {
+                                val pathsText = attachments.joinToString("\n")
+                                clipboardManager.setText(AnnotatedString(pathsText))
+                                Toast.makeText(context, "Attachment links copied", Toast.LENGTH_SHORT).show()
+                                showMenu = false
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Save Attachments to Downloads") },
+                            onClick = {
+                                scope.launch {
+                                    var allSaved = true
+                                    for (path in attachments) {
+                                        val success = FileDownloadHelper.saveAttachmentToDownloads(context, path)
+                                        if (!success) allSaved = false
+                                    }
+                                    if (allSaved) {
+                                        Toast.makeText(context, "All attachments saved to Downloads", Toast.LENGTH_LONG).show()
+                                    } else {
+                                        Toast.makeText(context, "Some attachments failed to save", Toast.LENGTH_LONG).show()
+                                    }
+                                }
+                                showMenu = false
+                            }
+                        )
+                        val hasMedia = attachments.any { path ->
+                            val mime = FileDownloadHelper.getMimeType(path)
+                            mime?.startsWith("image") == true || mime?.startsWith("video") == true
+                        }
+                        if (hasMedia) {
+                            DropdownMenuItem(
+                                text = { Text("Save Media to Gallery") },
+                                onClick = {
+                                    scope.launch {
+                                        var allSaved = true
+                                        for (path in attachments) {
+                                            val mime = FileDownloadHelper.getMimeType(path)
+                                            if (mime?.startsWith("image") == true || mime?.startsWith("video") == true) {
+                                                val success = FileDownloadHelper.saveAttachmentToGallery(context, path)
+                                                if (!success) allSaved = false
+                                            }
+                                        }
+                                        if (allSaved) {
+                                            Toast.makeText(context, "Media saved to Gallery", Toast.LENGTH_LONG).show()
+                                        } else {
+                                            Toast.makeText(context, "Failed to save some media", Toast.LENGTH_LONG).show()
+                                        }
+                                    }
+                                    showMenu = false
+                                }
+                            )
+                        }
                     }
                 }
             }
