@@ -40,6 +40,8 @@ android {
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+            excludes += "/META-INF/INDEX.LIST"
+            excludes += "/META-INF/DEPENDENCIES"
         }
     }
 }
@@ -80,6 +82,9 @@ dependencies {
 
     // Coil Image Loading
     implementation(libs.coil.compose)
+
+    // Google Gen AI SDK
+    implementation(libs.google.genai)
 
     // Testing
     testImplementation(libs.junit)

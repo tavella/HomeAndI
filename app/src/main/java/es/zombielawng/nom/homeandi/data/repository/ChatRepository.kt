@@ -14,9 +14,10 @@ import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
+import android.util.Base64
 import java.util.UUID
 
-class ChatRepository(
+open class ChatRepository(
     private val chatSessionDao: ChatSessionDao,
     private val chatMessageDao: ChatMessageDao,
     private val apiService: HomeAndIApiService,
@@ -116,14 +117,7 @@ class ChatRepository(
         val lastIdx = historyEntities.lastIndex
         for (i in historyEntities.indices) {
             val entity = historyEntities[i]
-            val isCurrentUserMessage = (i == lastIdx && entity.role == "user")
-            
-            val contentToSend: Any = if (isCurrentUserMessage && isWebSearchActive) {
-                val searchResults = performWebSearch(userPrompt)
-                "[Web Search Results Context]\n$searchResults\n\n[User Prompt]\n${entity.content}"
-            } else {
-                entity.content
-            }
+            val contentToSend = entity.content
 
             val parts = parseAttachments(entity.attachmentPathsJson)
             if (parts.isNotEmpty() && entity.role == "user") {
@@ -141,20 +135,42 @@ class ChatRepository(
             }
         }
 
-        // 4. Construct Retrofit Payload
-        val request = ChatCompletionRequest(
-            model = model,
-            messages = apiMessages,
-            temperature = 0.7
-        )
+        val isGemini = model.contains("gemini", ignoreCase = true) ||
+                       preferencesManager.getApiKeySync().startsWith("AIzaSy") ||
+                       preferencesManager.getHostSync().contains("googleapis.com")
 
-        // 5. Execute Network Call
-        try {
-            val response = apiService.createChatCompletion(request)
-            if (response.isSuccessful && response.body() != null) {
-                val body = response.body()!!
-                val assistantReplyText = body.choices?.firstOrNull()?.message?.content
-                    ?: "No content returned by HomeAndI."
+        if (isGemini) {
+            val geminiApiKey = preferencesManager.getGeminiApiKeySync()
+            val sdkContents = convertToSdkContents(apiMessages)
+            
+            val searchTool = com.google.genai.kotlin.types.Tool(
+                googleSearch = com.google.genai.kotlin.types.GoogleSearch()
+            )
+            val sdkConfig = com.google.genai.kotlin.types.GenerateContentConfig(
+                tools = if (isWebSearchActive) listOf(searchTool) else null,
+                temperature = 0.7,
+                systemInstruction = if (systemPrompt.isNotBlank()) {
+                    com.google.genai.kotlin.types.Content(
+                        parts = listOf(com.google.genai.kotlin.types.Part(text = systemPrompt))
+                    )
+                } else null
+            )
+
+            try {
+                val sdkClient = createGenAiClient(geminiApiKey)
+                val response = sdkClient.models.generateContent(
+                    model = model,
+                    contents = sdkContents,
+                    config = sdkConfig
+                )
+
+                val assistantReplyText = response.text ?: "No content returned by Gemini."
+                val groundingMetadata = response.candidates?.firstOrNull()?.groundingMetadata
+                val groundingMetadataJson = if (groundingMetadata != null) {
+                    gson.toJson(groundingMetadata)
+                } else {
+                    null
+                }
 
                 val assistantMsg = ChatMessageEntity(
                     id = UUID.randomUUID().toString(),
@@ -162,21 +178,225 @@ class ChatRepository(
                     role = "assistant",
                     content = assistantReplyText,
                     timestamp = System.currentTimeMillis(),
-                    status = "SENT"
+                    status = "SENT",
+                    groundingMetadataJson = groundingMetadataJson
                 )
                 chatMessageDao.insertMessage(assistantMsg)
                 NetworkResult.Success(assistantMsg)
-            } else {
-                val errorMsg = "HTTP ${response.code()}: ${response.errorBody()?.string() ?: response.message()}"
+            } catch (e: kotlinx.coroutines.CancellationException) {
                 chatMessageDao.updateMessageStatus(userMsgId, status = "ERROR")
-                NetworkResult.Error(errorMsg)
+                throw e
+            } catch (e: Exception) {
+                chatMessageDao.updateMessageStatus(userMsgId, status = "ERROR")
+                NetworkResult.Error("Network error: ${e.localizedMessage ?: "Connection failed"}", e)
             }
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            chatMessageDao.updateMessageStatus(userMsgId, status = "ERROR")
-            throw e
-        } catch (e: Exception) {
-            chatMessageDao.updateMessageStatus(userMsgId, status = "ERROR")
-            NetworkResult.Error("Network error: ${e.localizedMessage ?: "Connection failed"}", e)
+        } else {
+            val webSearchTool = ChatToolDefinition(
+                function = ChatFunctionDefinition(
+                    name = "web_search",
+                    description = "Search the web for real-time information (like date, time, weather, news, etc.).",
+                    parameters = ChatFunctionParameters(
+                        properties = mapOf(
+                            "query" to ChatFunctionProperty(
+                                type = "string",
+                                description = "The search query to look up on the web"
+                            )
+                        ),
+                        required = listOf("query")
+                    )
+                )
+            )
+            val tools = if (isWebSearchActive) listOf(webSearchTool) else null
+
+            // 4. Construct Retrofit Payload
+            val request = ChatCompletionRequest(
+                model = model,
+                messages = apiMessages,
+                temperature = 0.7,
+                tools = tools
+            )
+
+            // 5. Execute Network Call
+            try {
+                var currentRequest = request
+                var response = apiService.createChatCompletion(currentRequest)
+                var retryCount = 0
+                val maxRetries = 5
+                val allSearchResults = mutableListOf<WebSearchResult>()
+
+                while (response.isSuccessful && response.body() != null && retryCount < maxRetries) {
+                    val body = response.body()!!
+                    val choice = body.choices?.firstOrNull()
+                    val message = choice?.message
+                    
+                    if (message?.toolCalls != null && message.toolCalls.isNotEmpty()) {
+                        val mutableMessages = currentRequest.messages.toMutableList()
+                        
+                        // Append assistant message with tool calls to context
+                        mutableMessages.add(
+                            ApiMessage(
+                                role = "assistant",
+                                content = message.content ?: "",
+                                toolCalls = message.toolCalls
+                            )
+                        )
+                        
+                        for (toolCall in message.toolCalls) {
+                            if (toolCall.function.name == "web_search") {
+                                val argumentsJson = toolCall.function.arguments
+                                val arguments = try {
+                                    gson.fromJson(argumentsJson, Map::class.java)
+                                } catch (e: Exception) {
+                                    emptyMap<String, Any>()
+                                }
+                                val query = arguments["query"] as? String ?: userPrompt
+                                
+                                val searchResponse = apiService.executeWebSearch(WebSearchRequest(query))
+                                val searchResultContent = if (searchResponse.isSuccessful && searchResponse.body() != null) {
+                                    val searchBody = searchResponse.body()!!
+                                    if (searchBody.ok && searchBody.results != null) {
+                                        allSearchResults.addAll(searchBody.results)
+                                        val resultsBuilder = StringBuilder()
+                                        for (result in searchBody.results) {
+                                            resultsBuilder.append("Title: ").append(result.title).append("\n")
+                                                .append("URL: ").append(result.url).append("\n")
+                                                .append("Snippet: ").append(result.snippet).append("\n\n")
+                                        }
+                                        resultsBuilder.toString().trim()
+                                    } else {
+                                        "No search results returned."
+                                    }
+                                } else {
+                                    "Web search failed."
+                                }
+                                
+                                mutableMessages.add(
+                                    ApiMessage(
+                                        role = "tool",
+                                        content = searchResultContent,
+                                        toolCallId = toolCall.id,
+                                        name = toolCall.function.name
+                                    )
+                                )
+                            }
+                        }
+                        
+                        currentRequest = currentRequest.copy(messages = mutableMessages)
+                        response = apiService.createChatCompletion(currentRequest)
+                        retryCount++
+                    } else {
+                        break
+                    }
+                }
+
+                if (response.isSuccessful && response.body() != null) {
+                    val body = response.body()!!
+                    val assistantReplyText = body.choices?.firstOrNull()?.message?.content
+                        ?: "No content returned by HomeAndI."
+
+                    val groundingMetadataJson = if (allSearchResults.isNotEmpty()) {
+                        val chunks = allSearchResults.map { result ->
+                            GeminiGroundingChunk(
+                                web = GeminiWebSource(
+                                    uri = result.url ?: "",
+                                    title = result.title ?: ""
+                                )
+                            )
+                        }
+                        val metadata = GeminiGroundingMetadata(
+                            webSearchQueries = listOf(userPrompt),
+                            groundingChunks = chunks,
+                            searchEntryPoint = null
+                        )
+                        gson.toJson(metadata)
+                    } else {
+                        null
+                    }
+
+                    val assistantMsg = ChatMessageEntity(
+                        id = UUID.randomUUID().toString(),
+                        sessionId = sessionId,
+                        role = "assistant",
+                        content = assistantReplyText,
+                        timestamp = System.currentTimeMillis(),
+                        status = "SENT",
+                        groundingMetadataJson = groundingMetadataJson
+                    )
+                    chatMessageDao.insertMessage(assistantMsg)
+                    NetworkResult.Success(assistantMsg)
+                } else {
+                    val errorMsg = "HTTP ${response.code()}: ${response.errorBody()?.string() ?: response.message()}"
+                    chatMessageDao.updateMessageStatus(userMsgId, status = "ERROR")
+                    NetworkResult.Error(errorMsg)
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                chatMessageDao.updateMessageStatus(userMsgId, status = "ERROR")
+                throw e
+            } catch (e: Exception) {
+                chatMessageDao.updateMessageStatus(userMsgId, status = "ERROR")
+                NetworkResult.Error("Network error: ${e.localizedMessage ?: "Connection failed"}", e)
+            }
+        }
+    }
+
+    private fun convertToGeminiContents(apiMessages: List<ApiMessage>): List<GeminiContent> {
+        return apiMessages.filter { it.role != "system" }.map { msg ->
+            val role = when (msg.role) {
+                "user" -> "user"
+                "assistant" -> "model"
+                else -> "user"
+            }
+            val parts = when (val content = msg.content) {
+                is String -> listOf(GeminiPart(text = content))
+                is List<*> -> {
+                    content.mapNotNull { part ->
+                        when (part) {
+                            is TextContentPart -> GeminiPart(text = part.text)
+                            is ImageUrlContentPart -> {
+                                val base64Data = part.imageUrl.url.substringAfter("base64,")
+                                val mimeType = part.imageUrl.url.substringBefore(";base64,").substringAfter("data:")
+                                GeminiPart(inlineData = GeminiInlineData(mimeType = mimeType, data = base64Data))
+                            }
+                            else -> null
+                        }
+                    }
+                }
+                else -> listOf(GeminiPart(text = content.toString()))
+            }
+            GeminiContent(role = role, parts = parts)
+        }
+    }
+
+    private fun convertToSdkContents(apiMessages: List<ApiMessage>): List<com.google.genai.kotlin.types.Content> {
+        return apiMessages.filter { it.role != "system" }.map { msg ->
+            val role = when (msg.role) {
+                "user" -> "user"
+                "assistant" -> "model"
+                else -> "user"
+            }
+            val parts = when (val content = msg.content) {
+                is String -> listOf(com.google.genai.kotlin.types.Part(text = content))
+                is List<*> -> {
+                    content.mapNotNull { part ->
+                        when (part) {
+                            is TextContentPart -> com.google.genai.kotlin.types.Part(text = part.text)
+                            is ImageUrlContentPart -> {
+                                val base64Data = part.imageUrl.url.substringAfter("base64,")
+                                val mimeType = part.imageUrl.url.substringBefore(";base64,").substringAfter("data:")
+                                com.google.genai.kotlin.types.Part(
+                                    inlineData = com.google.genai.kotlin.types.Blob(
+                                        mimeType = mimeType,
+                                        data = Base64.decode(base64Data, Base64.DEFAULT)
+                                    )
+                                )
+                            }
+                            else -> null
+                        }
+                    }
+                }
+                else -> listOf(com.google.genai.kotlin.types.Part(text = content.toString()))
+            }
+            com.google.genai.kotlin.types.Content(role = role, parts = parts)
         }
     }
 
@@ -384,134 +604,7 @@ class ChatRepository(
         }
     }
 
-    private suspend fun performWebSearch(query: String): String = withContext(Dispatchers.IO) {
-        val provider = preferencesManager.getSearchProviderSync()
-        try {
-            when (provider) {
-                "google" -> {
-                    val apiKey = preferencesManager.getGoogleApiKeySync()
-                    val cx = preferencesManager.getGoogleCxSync()
-                    if (apiKey.isBlank() || cx.isBlank()) {
-                        return@withContext "Error: Google search API Key or Search Engine ID is missing in settings."
-                    }
-                    val encodedQuery = java.net.URLEncoder.encode(query, "UTF-8")
-                    val urlStr = "https://www.googleapis.com/customsearch/v1?key=$apiKey&cx=$cx&q=$encodedQuery"
-                    val connection = java.net.URL(urlStr).openConnection() as java.net.HttpURLConnection
-                    connection.requestMethod = "GET"
-                    connection.setRequestProperty("User-Agent", "Mozilla/5.0")
-                    connection.connect()
-                    if (connection.responseCode == 200) {
-                        val responseText = connection.inputStream.bufferedReader().use { it.readText() }
-                        val json = com.google.gson.JsonParser.parseString(responseText).asJsonObject
-                        val items = json.getAsJsonArray("items")
-                        if (items != null && items.size() > 0) {
-                            val results = StringBuilder()
-                            var count = 0
-                            for (element in items) {
-                                if (count >= 3) break
-                                val item = element.asJsonObject
-                                val title = item.get("title")?.asString ?: ""
-                                val link = item.get("link")?.asString ?: ""
-                                val snippet = item.get("snippet")?.asString ?: ""
-                                results.append("Title: ").append(title).append("\n")
-                                       .append("URL: ").append(link).append("\n")
-                                       .append("Snippet: ").append(snippet).append("\n\n")
-                                count++
-                            }
-                            results.toString().trim()
-                        } else {
-                            "No search results returned from Google."
-                        }
-                    } else {
-                        "Google Search returned HTTP error ${connection.responseCode}"
-                    }
-                }
-                "bing" -> {
-                    val apiKey = preferencesManager.getBingApiKeySync()
-                    if (apiKey.isBlank()) {
-                        return@withContext "Error: Bing search API Key is missing in settings."
-                    }
-                    val encodedQuery = java.net.URLEncoder.encode(query, "UTF-8")
-                    val urlStr = "https://api.bing.microsoft.com/v7.0/search?q=$encodedQuery"
-                    val connection = java.net.URL(urlStr).openConnection() as java.net.HttpURLConnection
-                    connection.requestMethod = "GET"
-                    connection.setRequestProperty("Ocp-Apim-Subscription-Key", apiKey)
-                    connection.setRequestProperty("User-Agent", "Mozilla/5.0")
-                    connection.connect()
-                    if (connection.responseCode == 200) {
-                        val responseText = connection.inputStream.bufferedReader().use { it.readText() }
-                        val json = com.google.gson.JsonParser.parseString(responseText).asJsonObject
-                        val webPages = json.getAsJsonObject("webPages")
-                        val value = webPages?.getAsJsonArray("value")
-                        if (value != null && value.size() > 0) {
-                            val results = StringBuilder()
-                            var count = 0
-                            for (element in value) {
-                                if (count >= 3) break
-                                val item = element.asJsonObject
-                                val title = item.get("name")?.asString ?: ""
-                                val link = item.get("url")?.asString ?: ""
-                                val snippet = item.get("snippet")?.asString ?: ""
-                                results.append("Title: ").append(title).append("\n")
-                                       .append("URL: ").append(link).append("\n")
-                                       .append("Snippet: ").append(snippet).append("\n\n")
-                                count++
-                            }
-                            results.toString().trim()
-                        } else {
-                            "No search results returned from Bing."
-                        }
-                    } else {
-                        "Bing Search returned HTTP error ${connection.responseCode}"
-                    }
-                }
-                else -> { // duckduckgo
-                    val encodedQuery = java.net.URLEncoder.encode(query, "UTF-8")
-                    val urlStr = "https://api.duckduckgo.com/?q=$encodedQuery&format=json&no_html=1"
-                    val connection = java.net.URL(urlStr).openConnection() as java.net.HttpURLConnection
-                    connection.requestMethod = "GET"
-                    connection.setRequestProperty("User-Agent", "Mozilla/5.0")
-                    connection.connect()
-                    if (connection.responseCode == 200) {
-                        val responseText = connection.inputStream.bufferedReader().use { it.readText() }
-                        val json = com.google.gson.JsonParser.parseString(responseText).asJsonObject
-                        val abstractText = json.get("AbstractText")?.asString ?: ""
-                        val results = StringBuilder()
-                        if (abstractText.isNotBlank()) {
-                            results.append("Title: ").append(json.get("Heading")?.asString ?: query).append("\n")
-                                   .append("URL: ").append(json.get("AbstractURL")?.asString ?: "").append("\n")
-                                   .append("Snippet: ").append(abstractText).append("\n\n")
-                        }
-                        val relatedTopics = json.getAsJsonArray("RelatedTopics")
-                        if (relatedTopics != null) {
-                            var count = 0
-                            for (element in relatedTopics) {
-                                if (count >= 2) break
-                                if (element.isJsonObject) {
-                                    val item = element.asJsonObject
-                                    val text = item.get("Text")?.asString ?: ""
-                                    val firstLink = item.get("FirstURL")?.asString ?: ""
-                                    if (text.isNotBlank()) {
-                                        results.append("Title: Related Topic\n")
-                                               .append("URL: ").append(firstLink).append("\n")
-                                               .append("Snippet: ").append(text).append("\n\n")
-                                        count++
-                                    }
-                                }
-                            }
-                        }
-                        if (results.isNotEmpty()) {
-                            results.toString().trim()
-                        } else {
-                            "No search results returned from DuckDuckGo."
-                        }
-                    } else {
-                        "DuckDuckGo returned HTTP error ${connection.responseCode}"
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            "Error performing web search: ${e.localizedMessage}"
-        }
+    internal open fun createGenAiClient(apiKey: String): com.google.genai.kotlin.Client {
+        return com.google.genai.kotlin.Client(apiKey = apiKey)
     }
 }

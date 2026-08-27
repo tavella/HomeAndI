@@ -29,10 +29,7 @@ data class SettingsUiState(
     val isScreenshotsEnabled: Boolean = true,
     val themeMode: String = "system",
     val isWebSearchEnabled: Boolean = false,
-    val searchProvider: String = "google",
-    val googleApiKey: String = "",
-    val googleCx: String = "",
-    val bingApiKey: String = ""
+    val geminiApiKey: String = ""
 )
 
 class SettingsViewModel(
@@ -61,10 +58,7 @@ class SettingsViewModel(
                 isScreenshotsEnabled = preferencesManager.getScreenshotsEnabledSync(),
                 themeMode = preferencesManager.getThemeModeSync(),
                 isWebSearchEnabled = preferencesManager.getWebSearchEnabledSync(),
-                searchProvider = preferencesManager.getSearchProviderSync(),
-                googleApiKey = preferencesManager.getGoogleApiKeySync(),
-                googleCx = preferencesManager.getGoogleCxSync(),
-                bingApiKey = preferencesManager.getBingApiKeySync()
+                geminiApiKey = preferencesManager.getGeminiApiKeySync()
             )
         }
     }
@@ -84,25 +78,12 @@ class SettingsViewModel(
         preferencesManager.updateWebSearchEnabled(enabled)
     }
 
-    fun updateSearchProvider(provider: String) {
-        _uiState.update { it.copy(searchProvider = provider) }
-        preferencesManager.updateSearchProvider(provider)
+    fun updateGeminiApiKey(key: String) {
+        _uiState.update { it.copy(geminiApiKey = key) }
+        preferencesManager.updateGeminiApiKey(key)
     }
 
-    fun updateGoogleApiKey(key: String) {
-        _uiState.update { it.copy(googleApiKey = key) }
-        preferencesManager.updateGoogleApiKey(key)
-    }
 
-    fun updateGoogleCx(cx: String) {
-        _uiState.update { it.copy(googleCx = cx) }
-        preferencesManager.updateGoogleCx(cx)
-    }
-
-    fun updateBingApiKey(key: String) {
-        _uiState.update { it.copy(bingApiKey = key) }
-        preferencesManager.updateBingApiKey(key)
-    }
 
     fun updateHost(host: String) {
         _uiState.update { it.copy(host = host) }

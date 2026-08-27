@@ -10,7 +10,9 @@ data class ChatCompletionRequest(
     @SerializedName("messages") val messages: List<ApiMessage>,
     @SerializedName("temperature") val temperature: Double = 0.7,
     @SerializedName("max_tokens") val maxTokens: Int? = null,
-    @SerializedName("stream") val stream: Boolean = false
+    @SerializedName("stream") val stream: Boolean = false,
+    @SerializedName("tools") val tools: List<ChatToolDefinition>? = null,
+    @SerializedName("tool_choice") val toolChoice: String? = null
 )
 
 /**
@@ -19,7 +21,10 @@ data class ChatCompletionRequest(
  */
 data class ApiMessage(
     @SerializedName("role") val role: String,
-    @SerializedName("content") val content: Any
+    @SerializedName("content") val content: Any,
+    @SerializedName("tool_call_id") val toolCallId: String? = null,
+    @SerializedName("name") val name: String? = null,
+    @SerializedName("tool_calls") val toolCalls: List<ChatToolCall>? = null
 )
 
 /**
@@ -61,13 +66,63 @@ data class Choice(
 
 data class ResponseMessage(
     @SerializedName("role") val role: String,
-    @SerializedName("content") val content: String?
+    @SerializedName("content") val content: String?,
+    @SerializedName("tool_calls") val toolCalls: List<ChatToolCall>? = null
 )
 
 data class Usage(
     @SerializedName("prompt_tokens") val promptTokens: Int,
     @SerializedName("completion_tokens") val completionTokens: Int,
     @SerializedName("total_tokens") val totalTokens: Int
+)
+
+data class ChatToolDefinition(
+    @SerializedName("type") val type: String = "function",
+    @SerializedName("function") val function: ChatFunctionDefinition
+)
+
+data class ChatFunctionDefinition(
+    @SerializedName("name") val name: String,
+    @SerializedName("description") val description: String,
+    @SerializedName("parameters") val parameters: ChatFunctionParameters
+)
+
+data class ChatFunctionParameters(
+    @SerializedName("type") val type: String = "object",
+    @SerializedName("properties") val properties: Map<String, ChatFunctionProperty>,
+    @SerializedName("required") val required: List<String>
+)
+
+data class ChatFunctionProperty(
+    @SerializedName("type") val type: String,
+    @SerializedName("description") val description: String
+)
+
+data class ChatToolCall(
+    @SerializedName("id") val id: String,
+    @SerializedName("type") val type: String = "function",
+    @SerializedName("function") val function: ChatToolCallFunction
+)
+
+data class ChatToolCallFunction(
+    @SerializedName("name") val name: String,
+    @SerializedName("arguments") val arguments: String
+)
+
+data class WebSearchRequest(
+    @SerializedName("query") val query: String
+)
+
+data class WebSearchResponse(
+    @SerializedName("ok") val ok: Boolean,
+    @SerializedName("provider") val provider: String?,
+    @SerializedName("results") val results: List<WebSearchResult>?
+)
+
+data class WebSearchResult(
+    @SerializedName("title") val title: String?,
+    @SerializedName("url") val url: String?,
+    @SerializedName("snippet") val snippet: String?
 )
 
 /**
@@ -139,4 +194,74 @@ data class OmlxModelLoadRequest(
 
 data class OmlxModelUnloadRequest(
     @SerializedName("model_path") val modelPath: String
+)
+
+/**
+ * Native Gemini API GenerateContent Request/Response Payload
+ */
+data class GeminiGenerateContentRequest(
+    @SerializedName("contents") val contents: List<GeminiContent>,
+    @SerializedName("tools") val tools: List<GeminiTool>? = null,
+    @SerializedName("generationConfig") val generationConfig: GeminiGenerationConfig? = null,
+    @SerializedName("systemInstruction") val systemInstruction: GeminiContent? = null
+)
+
+data class GeminiContent(
+    @SerializedName("role") val role: String? = null,
+    @SerializedName("parts") val parts: List<GeminiPart>
+)
+
+data class GeminiPart(
+    @SerializedName("text") val text: String? = null,
+    @SerializedName("inlineData") val inlineData: GeminiInlineData? = null
+)
+
+data class GeminiInlineData(
+    @SerializedName("mimeType") val mimeType: String,
+    @SerializedName("data") val data: String
+)
+
+data class GeminiTool(
+    @SerializedName("googleSearch") val googleSearch: Map<String, Any>? = null
+)
+
+data class GeminiGenerationConfig(
+    @SerializedName("temperature") val temperature: Double? = null,
+    @SerializedName("maxOutputTokens") val maxOutputTokens: Int? = null
+)
+
+data class GeminiGenerateContentResponse(
+    @SerializedName("candidates") val candidates: List<GeminiCandidate>?,
+    @SerializedName("usageMetadata") val usageMetadata: GeminiUsageMetadata?
+)
+
+data class GeminiCandidate(
+    @SerializedName("content") val content: GeminiContent?,
+    @SerializedName("finishReason") val finishReason: String?,
+    @SerializedName("groundingMetadata") val groundingMetadata: GeminiGroundingMetadata?
+)
+
+data class GeminiGroundingMetadata(
+    @SerializedName("webSearchQueries") val webSearchQueries: List<String>?,
+    @SerializedName("groundingChunks") val groundingChunks: List<GeminiGroundingChunk>?,
+    @SerializedName("searchEntryPoint") val searchEntryPoint: GeminiSearchEntryPoint?
+)
+
+data class GeminiGroundingChunk(
+    @SerializedName("web") val web: GeminiWebSource?
+)
+
+data class GeminiWebSource(
+    @SerializedName("uri") val uri: String?,
+    @SerializedName("title") val title: String?
+)
+
+data class GeminiSearchEntryPoint(
+    @SerializedName("renderedContent") val renderedContent: String?
+)
+
+data class GeminiUsageMetadata(
+    @SerializedName("promptTokenCount") val promptTokenCount: Int,
+    @SerializedName("candidatesTokenCount") val candidatesTokenCount: Int,
+    @SerializedName("totalTokenCount") val totalTokenCount: Int
 )

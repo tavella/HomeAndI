@@ -117,6 +117,65 @@ class HomeAndIApiServiceTest {
     }
 
     @Test
+    fun `generateContent sends correct Gemini request payload and parses response groundingMetadata correctly`() = runTest {
+        val mockResponseJson = """
+            {
+              "candidates": [
+                {
+                  "content": {
+                    "role": "model",
+                    "parts": [{ "text": "Here is the grounded response content" }]
+                  },
+                  "finishReason": "STOP",
+                  "groundingMetadata": {
+                    "webSearchQueries": ["grounding search query"],
+                    "groundingChunks": [
+                      { "web": { "uri": "https://grounding.example.com", "title": "Example Grounding Source" } }
+                    ]
+                  }
+                }
+              ],
+              "usageMetadata": {
+                "promptTokenCount": 12,
+                "candidatesTokenCount": 20,
+                "totalTokenCount": 32
+              }
+            }
+        """.trimIndent()
+
+        mockWebServer.enqueue(MockResponse().setResponseCode(200).setBody(mockResponseJson))
+
+        val requestPayload = GeminiGenerateContentRequest(
+            contents = listOf(
+                GeminiContent(role = "user", parts = listOf(GeminiPart(text = "Grounding test prompt")))
+            ),
+            tools = listOf(GeminiTool(googleSearch = emptyMap()))
+        )
+
+        val response = apiService.generateContent("gemini-1.5-flash", requestPayload)
+
+        val recordedRequest = mockWebServer.takeRequest()
+        assertEquals("POST", recordedRequest.method)
+        assertEquals("/v1beta/models/gemini-1.5-flash:generateContent", recordedRequest.path)
+
+        val bodyText = recordedRequest.body.readUtf8()
+        assertTrue(bodyText.contains("Grounding test prompt"))
+        assertTrue(bodyText.contains("googleSearch"))
+
+        assertTrue(response.isSuccessful)
+        assertNotNull(response.body())
+        val candidate = response.body()!!.candidates?.firstOrNull()
+        assertNotNull(candidate)
+        assertEquals("model", candidate?.content?.role)
+        assertEquals("Here is the grounded response content", candidate?.content?.parts?.firstOrNull()?.text)
+        
+        val metadata = candidate?.groundingMetadata
+        assertNotNull(metadata)
+        assertEquals("https://grounding.example.com", metadata?.groundingChunks?.firstOrNull()?.web?.uri)
+        assertEquals("Example Grounding Source", metadata?.groundingChunks?.firstOrNull()?.web?.title)
+    }
+
+    @Test
     fun `getModels parses v1-models endpoint correctly for connection test`() = runTest {
         val modelsJson = """
             {
@@ -163,7 +222,7 @@ class HomeAndIApiServiceTest {
         assertEquals(1, data!!.size)
         assertEquals("mlx-community/Llama-3-8B-Instruct-4bit", data[0].id)
         assertTrue(data[0].isLoaded)
-        assertFalse(data[0].supportsManagement)
+        assertTrue(data[0].supportsManagement)
     }
 
     @Test

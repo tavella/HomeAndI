@@ -28,6 +28,7 @@ fun SettingsScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     var expanded by remember { mutableStateOf(false) }
     var showApiKey by remember { mutableStateOf(false) }
+    var showGeminiApiKey by remember { mutableStateOf(false) }
     var modelToDelete by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(state.saveMessage) {
@@ -139,119 +140,7 @@ fun SettingsScreen(
                 }
             }
 
-            // Search RAG Configuration Section
-            Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        text = "Search RAG Configuration",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
 
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(text = "Enable Web Search", style = MaterialTheme.typography.bodyLarge)
-                            Text(
-                                text = "Retrieve online reference context before querying the local LLM",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.outline
-                            )
-                        }
-                        Switch(
-                            checked = state.isWebSearchEnabled,
-                            onCheckedChange = { viewModel.updateWebSearchEnabled(it) }
-                        )
-                    }
-
-                    if (state.isWebSearchEnabled) {
-                        HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
-
-                        var dropdownExpanded by remember { mutableStateOf(false) }
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text(text = "Search Provider", style = MaterialTheme.typography.bodyLarge)
-                            Box {
-                                TextButton(onClick = { dropdownExpanded = true }) {
-                                    Text(
-                                        text = when (state.searchProvider) {
-                                            "google" -> "Google (Custom Search)"
-                                            "bing" -> "Bing Search"
-                                            else -> "DuckDuckGo (Instant)"
-                                        },
-                                        style = MaterialTheme.typography.bodyLarge
-                                    )
-                                    Icon(Icons.Rounded.ArrowDropDown, contentDescription = null)
-                                }
-                                DropdownMenu(
-                                    expanded = dropdownExpanded,
-                                    onDismissRequest = { dropdownExpanded = false }
-                                ) {
-                                    DropdownMenuItem(
-                                        text = { Text("Google") },
-                                        onClick = {
-                                            viewModel.updateSearchProvider("google")
-                                            dropdownExpanded = false
-                                        }
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text("DuckDuckGo") },
-                                        onClick = {
-                                            viewModel.updateSearchProvider("duckduckgo")
-                                            dropdownExpanded = false
-                                        }
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text("Bing") },
-                                        onClick = {
-                                            viewModel.updateSearchProvider("bing")
-                                            dropdownExpanded = false
-                                        }
-                                    )
-                                }
-                            }
-                        }
-
-                        if (state.searchProvider == "google") {
-                            Spacer(modifier = Modifier.height(12.dp))
-                            OutlinedTextField(
-                                value = state.googleApiKey,
-                                onValueChange = { viewModel.updateGoogleApiKey(it) },
-                                label = { Text("Google Search API Key") },
-                                modifier = Modifier.fillMaxWidth(),
-                                singleLine = true
-                            )
-                            Spacer(modifier = Modifier.height(8.dp))
-                            OutlinedTextField(
-                                value = state.googleCx,
-                                onValueChange = { viewModel.updateGoogleCx(it) },
-                                label = { Text("Google Custom Search Engine ID (CX)") },
-                                modifier = Modifier.fillMaxWidth(),
-                                singleLine = true
-                            )
-                        } else if (state.searchProvider == "bing") {
-                            Spacer(modifier = Modifier.height(12.dp))
-                            OutlinedTextField(
-                                value = state.bingApiKey,
-                                onValueChange = { viewModel.updateBingApiKey(it) },
-                                label = { Text("Bing Search API Key") },
-                                modifier = Modifier.fillMaxWidth(),
-                                singleLine = true
-                            )
-                        }
-                    }
-                }
-            }
 
             // Connection Status Section
             Card(
@@ -331,6 +220,26 @@ fun SettingsScreen(
                     }
                 },
                 visualTransformation = if (showApiKey) VisualTransformation.None else PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
+
+            OutlinedTextField(
+                value = state.geminiApiKey,
+                onValueChange = { viewModel.updateGeminiApiKey(it) },
+                label = { Text("Gemini API Key") },
+                placeholder = { Text("AIzaSy...") },
+                leadingIcon = { Icon(Icons.Rounded.Key, contentDescription = null) },
+                trailingIcon = {
+                    IconButton(onClick = { showGeminiApiKey = !showGeminiApiKey }) {
+                        Icon(
+                            imageVector = if (showGeminiApiKey) Icons.Rounded.VisibilityOff else Icons.Rounded.Visibility,
+                            contentDescription = if (showGeminiApiKey) "Hide Gemini API key" else "Show Gemini API key"
+                        )
+                    }
+                },
+                visualTransformation = if (showGeminiApiKey) VisualTransformation.None else PasswordVisualTransformation(),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true

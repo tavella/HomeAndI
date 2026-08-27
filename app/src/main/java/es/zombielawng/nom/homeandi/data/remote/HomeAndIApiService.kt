@@ -29,12 +29,12 @@ interface HomeAndIApiService {
 
     @POST("admin/api/models/{model_id}/load")
     suspend fun loadModelOmlx(
-        @Path("model_id") modelId: String
+        @Path(value = "model_id", encoded = true) modelId: String
     ): Response<Unit>
 
     @POST("admin/api/models/{model_id}/unload")
     suspend fun unloadModelOmlx(
-        @Path("model_id") modelId: String
+        @Path(value = "model_id", encoded = true) modelId: String
     ): Response<Unit>
 
     @GET("v1/models/status")
@@ -42,11 +42,22 @@ interface HomeAndIApiService {
 
     @retrofit2.http.DELETE("admin/api/models/{model_id}")
     suspend fun deleteModelOmlx(
-        @Path("model_id") modelId: String
+        @Path(value = "model_id", encoded = true) modelId: String
     ): Response<Unit>
 
     @retrofit2.http.DELETE("v1/models/{model_id}")
     suspend fun deleteModel(
-        @Path("model_id") modelId: String
+        @Path(value = "model_id", encoded = true) modelId: String
     ): Response<Unit>
+
+    @POST("v1beta/models/{model}:generateContent")
+    suspend fun generateContent(
+        @Path("model") model: String,
+        @Body request: GeminiGenerateContentRequest
+    ): Response<GeminiGenerateContentResponse>
+
+    @POST("v1/web/search")
+    suspend fun executeWebSearch(
+        @Body request: WebSearchRequest
+    ): Response<WebSearchResponse>
 }

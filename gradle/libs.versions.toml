@@ -19,9 +19,12 @@ coroutines = "1.7.3"
 archCoreTesting = "2.2.0"
 work = "2.11.2"
 coil = "2.7.0"
+googleGenAi = "0.4.0"
+
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
+google-genai = { group = "com.google.genai", name = "google-genai-kotlin", version.ref = "googleGenAi" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "junitVersion" }
 androidx-espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espressoCore" }

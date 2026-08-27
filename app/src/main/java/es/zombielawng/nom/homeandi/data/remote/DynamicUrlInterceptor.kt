@@ -33,6 +33,7 @@ class DynamicUrlInterceptor(
             .apply {
                 if (apiKey.isNotBlank()) {
                     header("Authorization", "Bearer $apiKey")
+                    header("x-goog-api-key", apiKey)
                 }
             }
             .build()

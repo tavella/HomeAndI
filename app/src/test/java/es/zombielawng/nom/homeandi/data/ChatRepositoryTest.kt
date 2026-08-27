@@ -22,7 +22,7 @@ class ChatRepositoryTest {
     private val chatSessionDao: ChatSessionDao = mockk(relaxed = true)
     private val chatMessageDao: ChatMessageDao = mockk(relaxed = true)
     private val apiService: HomeAndIApiService = mockk()
-    private val preferencesManager: ServerPreferencesManager = mockk()
+    private val preferencesManager: ServerPreferencesManager = mockk(relaxed = true)
     private val context: android.content.Context = mockk(relaxed = true)
 
     private lateinit var repository: ChatRepository
@@ -32,13 +32,13 @@ class ChatRepositoryTest {
         every { preferencesManager.getModelSync() } returns "meta-llama-3-8b"
         every { preferencesManager.getSystemPromptSync(any()) } returns "You are a helpful assistant."
 
-        repository = ChatRepository(
+        repository = spyk(ChatRepository(
             chatSessionDao = chatSessionDao,
             chatMessageDao = chatMessageDao,
             apiService = apiService,
             preferencesManager = preferencesManager,
             context = context
-        )
+        ))
     }
 
     @Test
@@ -99,6 +99,141 @@ class ChatRepositoryTest {
         // 3. Verify Room Database interactions
         coVerify { chatMessageDao.insertMessage(any()) }
         coVerify { chatSessionDao.updateSession(any()) }
+    }
+
+    @Test
+    fun `sendMessage with local model and search enabled intercepts tool calls, executes search, and returns final answer`() = runTest {
+        val sessionId = "session-local-search"
+        val existingSession = ChatSessionEntity(id = sessionId, title = "Local Search Chat", modelName = "meta-llama-3-8b")
+        val userMsg = ChatMessageEntity(id = "msg-1", sessionId = sessionId, role = "user", content = "What's the weather in Seattle?")
+
+        coEvery { chatSessionDao.getSessionById(sessionId) } returns existingSession
+        coEvery { chatMessageDao.getMessagesForSessionSync(sessionId) } returns listOf(userMsg)
+        every { preferencesManager.getGeminiApiKeySync() } returns ""
+        every { preferencesManager.getApiKeySync() } returns ""
+
+        // 1st response: Tool call returned by model
+        val toolCall = ChatToolCall(
+            id = "call-123",
+            function = ChatToolCallFunction(name = "web_search", arguments = "{\"query\":\"weather in Seattle\"}")
+        )
+        val mockApiResponse1 = ChatCompletionResponse(
+            id = "resp-1",
+            created = 1000L,
+            model = "meta-llama-3-8b",
+            choices = listOf(
+                Choice(
+                    index = 0,
+                    message = ResponseMessage(role = "assistant", content = null, toolCalls = listOf(toolCall)),
+                    finishReason = "tool_calls"
+                )
+            ),
+            usage = Usage(10, 15, 25)
+        )
+
+        // 2nd response: Final answer returned by model after tool results are fed back
+        val mockApiResponse2 = ChatCompletionResponse(
+            id = "resp-2",
+            created = 1001L,
+            model = "meta-llama-3-8b",
+            choices = listOf(
+                Choice(
+                    index = 0,
+                    message = ResponseMessage(role = "assistant", content = "It is currently 70 degrees and sunny in Seattle."),
+                    finishReason = "stop"
+                )
+            ),
+            usage = Usage(20, 25, 45)
+        )
+
+        val requests = mutableListOf<ChatCompletionRequest>()
+        coEvery { apiService.createChatCompletion(capture(requests)) } returns Response.success(mockApiResponse1) andThen Response.success(mockApiResponse2)
+
+        // Mock executeWebSearch endpoint response
+        val searchResults = listOf(WebSearchResult(title = "Seattle Weather", url = "https://weather.example.com", snippet = "70 degrees and sunny"))
+        val mockSearchResponse = WebSearchResponse(ok = true, provider = "duckduckgo", results = searchResults)
+        coEvery { apiService.executeWebSearch(any()) } returns Response.success(mockSearchResponse)
+
+        val result = repository.sendMessage(sessionId = sessionId, userPrompt = "What's the weather in Seattle?", isWebSearchActive = true)
+
+        assertTrue(result is NetworkResult.Success)
+        val assistantMsg = (result as NetworkResult.Success).data
+        assertEquals("It is currently 70 degrees and sunny in Seattle.", assistantMsg.content)
+        assertEquals("assistant", assistantMsg.role)
+        assertNotNull(assistantMsg.groundingMetadataJson)
+        assertTrue(assistantMsg.groundingMetadataJson!!.contains("https://weather.example.com"))
+
+        // Verify captured requests
+        val firstRequest = requests[0]
+        assertNotNull(firstRequest.tools)
+        assertEquals("web_search", firstRequest.tools!![0].function.name)
+
+        val secondRequest = requests[1]
+        // The messages in secondRequest should contain the tool result message
+        val messages = secondRequest.messages
+        val toolMessage = messages.find { it.role == "tool" }
+        assertNotNull(toolMessage)
+        assertEquals("call-123", toolMessage!!.toolCallId)
+        assertTrue(toolMessage.content.toString().contains("70 degrees and sunny"))
+    }
+
+    @Test
+    fun `sendMessage with Gemini model and search grounding enabled sends correct request and saves groundingMetadata`() = runTest {
+        val sessionId = "session-gemini"
+        val existingSession = ChatSessionEntity(id = sessionId, title = "New Chat", modelName = "gemini-1.5-flash")
+        val userMsg = ChatMessageEntity(id = "msg-1", sessionId = sessionId, role = "user", content = "What is the latest news?")
+
+        coEvery { chatSessionDao.getSessionById(sessionId) } returns existingSession
+        coEvery { chatMessageDao.getMessagesForSessionSync(sessionId) } returns listOf(userMsg)
+        every { preferencesManager.getGeminiApiKeySync() } returns "AIzaSyFakeKey"
+
+        val mockClient = mockk<com.google.genai.kotlin.Client>()
+        val mockModels = mockk<com.google.genai.kotlin.Models>()
+        every { repository.createGenAiClient(any()) } returns mockClient
+        every { mockClient.models } returns mockModels
+        
+        val mockWebSource = com.google.genai.kotlin.types.GroundingChunkWeb(uri = "https://example.com/news", title = "Latest News Example")
+        val mockChunk = com.google.genai.kotlin.types.GroundingChunk(web = mockWebSource)
+        val mockMetadata = com.google.genai.kotlin.types.GroundingMetadata(
+            webSearchQueries = listOf("What is the latest news"),
+            groundingChunks = listOf(mockChunk),
+            searchEntryPoint = com.google.genai.kotlin.types.SearchEntryPoint(renderedContent = "Search Entry Point HTML")
+        )
+        
+        val mockCandidate = com.google.genai.kotlin.types.Candidate(
+            content = com.google.genai.kotlin.types.Content(role = "model", parts = listOf(com.google.genai.kotlin.types.Part(text = "Here is the news from example.com"))),
+            finishReason = com.google.genai.kotlin.types.FinishReason.STOP,
+            groundingMetadata = mockMetadata
+        )
+        
+        val mockResponse = com.google.genai.kotlin.types.GenerateContentResponse(
+            candidates = listOf(mockCandidate),
+            usageMetadata = com.google.genai.kotlin.types.GenerateContentResponseUsageMetadata(promptTokenCount = 10, candidatesTokenCount = 15, totalTokenCount = 25)
+        )
+
+        val configSlot = slot<com.google.genai.kotlin.types.GenerateContentConfig>()
+        
+        coEvery { mockModels.generateContent(
+            model = "gemini-1.5-flash",
+            contents = any(),
+            config = capture(configSlot)
+        ) } returns mockResponse
+
+        val result = repository.sendMessage(sessionId = sessionId, userPrompt = "What is the latest news?", isWebSearchActive = true)
+        if (result is NetworkResult.Error) {
+            println("GEMINI_TEST_ERROR: ${result.message} / Exception: ${result.exception}")
+        }
+        assertTrue(result is NetworkResult.Success)
+        val assistantMsg = (result as NetworkResult.Success).data
+        assertEquals("Here is the news from example.com", assistantMsg.content)
+        assertEquals("assistant", assistantMsg.role)
+        assertNotNull(assistantMsg.groundingMetadataJson)
+        assertTrue(assistantMsg.groundingMetadataJson!!.contains("https://example.com/news"))
+
+        val capturedConfig = configSlot.captured
+        assertNotNull(capturedConfig.tools)
+        assertEquals(1, capturedConfig.tools!!.size)
+        assertNotNull(capturedConfig.tools!![0].googleSearch)
     }
 
     @Test

@@ -13,6 +13,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Android
 import androidx.compose.material.icons.rounded.Error
 import androidx.compose.material.icons.rounded.Person
+import androidx.compose.material.icons.rounded.Link
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.material3.*
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
@@ -144,6 +146,65 @@ fun ChatBubble(
                             text = message.content,
                             contentColor = contentColor
                         )
+
+                        val uriHandler = LocalUriHandler.current
+                        val groundingMetadata = remember(message.groundingMetadataJson) {
+                            if (!message.groundingMetadataJson.isNullOrBlank()) {
+                                try {
+                                    Gson().fromJson(message.groundingMetadataJson, es.zombielawng.nom.homeandi.data.remote.GeminiGroundingMetadata::class.java)
+                                } catch (e: Exception) {
+                                    null
+                                }
+                            } else null
+                        }
+
+                        val chunks = groundingMetadata?.groundingChunks?.filter { it.web?.uri != null }
+                        if (!chunks.isNullOrEmpty()) {
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Text(
+                                text = "Sources:",
+                                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                color = contentColor.copy(alpha = 0.8f)
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            chunks.forEach { chunk ->
+                                val title = chunk.web?.title ?: "Web Source"
+                                val uri = chunk.web?.uri ?: ""
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .padding(vertical = 3.dp)
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(contentColor.copy(alpha = 0.08f))
+                                        .clickable {
+                                            if (uri.isNotBlank()) {
+                                                try {
+                                                    uriHandler.openUri(uri)
+                                                } catch (e: Exception) {
+                                                    // ignore
+                                                }
+                                            }
+                                        }
+                                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Link,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = title,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        maxLines = 1,
+                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                        modifier = Modifier.widthIn(max = 240.dp)
+                                    )
+                                }
+                            }
+                        }
 
                         Spacer(modifier = Modifier.height(4.dp))
 
