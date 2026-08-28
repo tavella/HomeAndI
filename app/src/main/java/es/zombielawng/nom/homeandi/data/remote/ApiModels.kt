@@ -265,3 +265,14 @@ data class GeminiUsageMetadata(
     @SerializedName("candidatesTokenCount") val candidatesTokenCount: Int,
     @SerializedName("totalTokenCount") val totalTokenCount: Int
 )
+
+data class GeminiModelListResponse(
+    @SerializedName("models") val models: List<GeminiModelData>? = null
+)
+
+data class GeminiModelData(
+    @SerializedName("name") val name: String,
+    @SerializedName("displayName") val displayName: String?,
+    @SerializedName("description") val description: String?,
+    @SerializedName("supportedGenerationMethods") val supportedGenerationMethods: List<String>?
+)

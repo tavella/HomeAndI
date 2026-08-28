@@ -135,50 +135,71 @@ open class ChatRepository(
             }
         }
 
-        if (isWebSearchActive) {
+        val isGeminiModel = model.startsWith("gemini", ignoreCase = true)
+        if (isWebSearchActive || isGeminiModel) {
             val geminiApiKey = preferencesManager.getGeminiApiKeySync()
-            val sdkContents = convertToSdkContents(apiMessages)
+            val geminiContents = convertToGeminiContents(apiMessages)
             
-            val searchTool = com.google.genai.kotlin.types.Tool(
-                googleSearch = com.google.genai.kotlin.types.GoogleSearch()
-            )
-            val sdkConfig = com.google.genai.kotlin.types.GenerateContentConfig(
-                tools = listOf(searchTool),
-                temperature = 0.7,
+            val tools = if (isWebSearchActive) {
+                listOf(GeminiTool(googleSearch = emptyMap()))
+            } else {
+                null
+            }
+
+            val geminiRequest = GeminiGenerateContentRequest(
+                contents = geminiContents,
+                tools = tools,
+                generationConfig = GeminiGenerationConfig(temperature = 0.7),
                 systemInstruction = if (systemPrompt.isNotBlank()) {
-                    com.google.genai.kotlin.types.Content(
-                        parts = listOf(com.google.genai.kotlin.types.Part(text = systemPrompt))
+                    GeminiContent(
+                        role = "system",
+                        parts = listOf(GeminiPart(text = systemPrompt))
                     )
                 } else null
             )
 
+            // Since gemini-1.5-flash is not supported on this specific key, use gemini-2.5-flash as the default fallback.
+            val targetModel = if (isGeminiModel) {
+                if (model == "gemini-1.5-flash") "gemini-2.5-flash" else model
+            } else {
+                "gemini-2.5-flash"
+            }
+
             try {
-                val sdkClient = createGenAiClient(geminiApiKey)
-                val response = sdkClient.models.generateContent(
-                    model = model,
-                    contents = sdkContents,
-                    config = sdkConfig
+                val response = apiService.generateContent(
+                    model = targetModel,
+                    apiKey = geminiApiKey,
+                    request = geminiRequest
                 )
 
-                val assistantReplyText = response.text ?: "No content returned by Gemini."
-                val groundingMetadata = response.candidates?.firstOrNull()?.groundingMetadata
-                val groundingMetadataJson = if (groundingMetadata != null) {
-                    gson.toJson(groundingMetadata)
+                if (response.isSuccessful && response.body() != null) {
+                    val body = response.body()!!
+                    val candidate = body.candidates?.firstOrNull()
+                    val assistantReplyText = candidate?.content?.parts?.firstOrNull()?.text
+                        ?: "No content returned by Gemini."
+                    val groundingMetadata = candidate?.groundingMetadata
+                    val groundingMetadataJson = if (groundingMetadata != null) {
+                        gson.toJson(groundingMetadata)
+                    } else {
+                        null
+                    }
+
+                    val assistantMsg = ChatMessageEntity(
+                        id = UUID.randomUUID().toString(),
+                        sessionId = sessionId,
+                        role = "assistant",
+                        content = assistantReplyText,
+                        timestamp = System.currentTimeMillis(),
+                        status = "SENT",
+                        groundingMetadataJson = groundingMetadataJson
+                    )
+                    chatMessageDao.insertMessage(assistantMsg)
+                    NetworkResult.Success(assistantMsg)
                 } else {
-                    null
+                    val errorMsg = "HTTP ${response.code()}: ${response.errorBody()?.string() ?: response.message()}"
+                    chatMessageDao.updateMessageStatus(userMsgId, status = "ERROR")
+                    NetworkResult.Error(errorMsg)
                 }
-
-                val assistantMsg = ChatMessageEntity(
-                    id = UUID.randomUUID().toString(),
-                    sessionId = sessionId,
-                    role = "assistant",
-                    content = assistantReplyText,
-                    timestamp = System.currentTimeMillis(),
-                    status = "SENT",
-                    groundingMetadataJson = groundingMetadataJson
-                )
-                chatMessageDao.insertMessage(assistantMsg)
-                NetworkResult.Success(assistantMsg)
             } catch (e: kotlinx.coroutines.CancellationException) {
                 chatMessageDao.updateMessageStatus(userMsgId, status = "ERROR")
                 throw e
@@ -255,38 +276,7 @@ open class ChatRepository(
         }
     }
 
-    private fun convertToSdkContents(apiMessages: List<ApiMessage>): List<com.google.genai.kotlin.types.Content> {
-        return apiMessages.filter { it.role != "system" }.map { msg ->
-            val role = when (msg.role) {
-                "user" -> "user"
-                "assistant" -> "model"
-                else -> "user"
-            }
-            val parts = when (val content = msg.content) {
-                is String -> listOf(com.google.genai.kotlin.types.Part(text = content))
-                is List<*> -> {
-                    content.mapNotNull { part ->
-                        when (part) {
-                            is TextContentPart -> com.google.genai.kotlin.types.Part(text = part.text)
-                            is ImageUrlContentPart -> {
-                                val base64Data = part.imageUrl.url.substringAfter("base64,")
-                                val mimeType = part.imageUrl.url.substringBefore(";base64,").substringAfter("data:")
-                                com.google.genai.kotlin.types.Part(
-                                    inlineData = com.google.genai.kotlin.types.Blob(
-                                        mimeType = mimeType,
-                                        data = Base64.decode(base64Data, Base64.DEFAULT)
-                                    )
-                                )
-                            }
-                            else -> null
-                        }
-                    }
-                }
-                else -> listOf(com.google.genai.kotlin.types.Part(text = content.toString()))
-            }
-            com.google.genai.kotlin.types.Content(role = role, parts = parts)
-        }
-    }
+
 
     /**
      * Executes ping/connectivity test against HomeAndI server (/v1/models).
@@ -483,6 +473,27 @@ open class ChatRepository(
         }
     }
 
+    suspend fun fetchGeminiModels(): NetworkResult<List<String>> = withContext(Dispatchers.IO) {
+        try {
+            val geminiApiKey = preferencesManager.getGeminiApiKeySync()
+            if (geminiApiKey.isBlank()) {
+                return@withContext NetworkResult.Error("Gemini API key is not configured.")
+            }
+            val response = apiService.getGeminiModels(geminiApiKey)
+            if (response.isSuccessful && response.body() != null) {
+                val modelsList = response.body()!!.models ?: emptyList()
+                val names = modelsList
+                    .filter { it.supportedGenerationMethods?.contains("generateContent") == true }
+                    .map { it.name.substringAfter("models/") }
+                NetworkResult.Success(names)
+            } else {
+                NetworkResult.Error("HTTP ${response.code()}: ${response.errorBody()?.string() ?: response.message()}")
+            }
+        } catch (e: Exception) {
+            NetworkResult.Error("Error fetching Gemini models: ${e.localizedMessage}")
+        }
+    }
+
     private fun parseAttachments(json: String): List<String> {
         return try {
             val type = object : TypeToken<List<String>>() {}.type
@@ -492,7 +503,5 @@ open class ChatRepository(
         }
     }
 
-    internal open fun createGenAiClient(apiKey: String): com.google.genai.kotlin.Client {
-        return com.google.genai.kotlin.Client(apiKey = apiKey)
-    }
+
 }

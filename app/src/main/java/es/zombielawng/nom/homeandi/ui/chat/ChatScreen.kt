@@ -605,6 +605,7 @@ fun ChatScreen(
         ModelSelectionDialog(
             title = "Start New Chat",
             loadedModels = state.loadedModels,
+            geminiModels = state.geminiModels,
             onModelSelected = { modelId ->
                 viewModel.createNewSession(modelId = modelId)
                 showNewSessionModelDialog = false
@@ -618,6 +619,7 @@ fun ChatScreen(
         ModelSelectionDialog(
             title = "Switch Model for this Chat",
             loadedModels = state.loadedModels,
+            geminiModels = state.geminiModels,
             onModelSelected = { modelId ->
                 state.activeSession?.id?.let { sessionId ->
                     viewModel.updateSessionModel(sessionId, modelId)
@@ -633,21 +635,38 @@ fun ChatScreen(
 fun ModelSelectionDialog(
     title: String,
     loadedModels: List<ModelData>,
+    geminiModels: List<String>,
     onModelSelected: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
+    val displayGeminiModels = geminiModels.ifEmpty {
+        listOf(
+            "gemini-2.5-flash",
+            "gemini-2.5-pro",
+            "gemini-3.5-flash",
+            "gemini-3.6-flash",
+            "gemini-3.7-flash"
+        )
+    }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = {
-            if (loadedModels.isEmpty()) {
-                Text("No models are currently loaded in RAM. Please go to Settings to load a model first.")
-            } else {
-                LazyColumn(
-                    modifier = Modifier.fillMaxWidth().heightIn(max = 300.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    items(loadedModels, key = { it.id }) { model ->
+            LazyColumn(
+                modifier = Modifier.fillMaxWidth().heightIn(max = 400.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                if (loadedModels.isNotEmpty()) {
+                    item {
+                        Text(
+                            text = "Local Models (RAM)",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(vertical = 4.dp)
+                        )
+                    }
+                    items(loadedModels, key = { "local_${it.id}" }) { model ->
                         Card(
                             onClick = { onModelSelected(model.id) },
                             modifier = Modifier.fillMaxWidth(),
@@ -657,6 +676,37 @@ fun ModelSelectionDialog(
                                 Text(model.displayName ?: model.id, style = MaterialTheme.typography.bodyLarge)
                                 Text(model.id, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
                             }
+                        }
+                    }
+                } else {
+                    item {
+                        Text(
+                            text = "No local models loaded. Go to Settings to load them.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.outline,
+                            modifier = Modifier.padding(vertical = 4.dp)
+                        )
+                    }
+                }
+
+                item {
+                    Text(
+                        text = "Gemini Cloud Models (Web Search)",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(vertical = 4.dp)
+                    )
+                }
+
+                items(displayGeminiModels, key = { "gemini_$it" }) { modelName ->
+                    Card(
+                        onClick = { onModelSelected(modelName) },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                    ) {
+                        Column(Modifier.padding(12.dp)) {
+                            Text(modelName, style = MaterialTheme.typography.bodyLarge)
+                            Text("Google Gemini API", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
                         }
                     }
                 }

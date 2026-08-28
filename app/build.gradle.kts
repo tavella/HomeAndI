@@ -83,8 +83,6 @@ dependencies {
     // Coil Image Loading
     implementation(libs.coil.compose)
 
-    // Google Gen AI SDK
-    implementation(libs.google.genai)
 
     // Testing
     testImplementation(libs.junit)

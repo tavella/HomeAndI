@@ -197,6 +197,12 @@ class ChatViewModel(
                     }
                 }
             }
+
+            // Fetch Gemini Cloud Models dynamically
+            val geminiResult = repository.fetchGeminiModels()
+            if (geminiResult is NetworkResult.Success) {
+                _uiState.update { it.copy(geminiModels = geminiResult.data) }
+            }
         }
     }
 

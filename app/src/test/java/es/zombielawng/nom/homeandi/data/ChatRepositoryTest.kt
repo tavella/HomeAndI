@@ -42,7 +42,7 @@ class ChatRepositoryTest {
     }
 
     @Test
-    fun `sendMessage fetches history and sends correct prompt array to Gemini SDK`() = runTest {
+    fun `sendMessage fetches history and sends correct prompt array to Gemini REST API`() = runTest {
         val sessionId = "session-123"
         val existingSession = ChatSessionEntity(id = sessionId, title = "New Chat", modelName = "gemini-1.5-flash")
         val oldUserMsg = ChatMessageEntity(id = "msg-1", sessionId = sessionId, role = "user", content = "Hello")
@@ -53,25 +53,22 @@ class ChatRepositoryTest {
         coEvery { chatMessageDao.getMessagesForSessionSync(sessionId) } returns listOf(oldUserMsg, oldAssistantMsg, newUserMsg)
         every { preferencesManager.getGeminiApiKeySync() } returns "AIzaSyFakeKey"
 
-        val mockClient = mockk<com.google.genai.kotlin.Client>()
-        val mockModels = mockk<com.google.genai.kotlin.Models>()
-        every { repository.createGenAiClient(any()) } returns mockClient
-        every { mockClient.models } returns mockModels
-
-        val mockCandidate = com.google.genai.kotlin.types.Candidate(
-            content = com.google.genai.kotlin.types.Content(role = "model", parts = listOf(com.google.genai.kotlin.types.Part(text = "I am doing great"))),
-            finishReason = com.google.genai.kotlin.types.FinishReason.STOP
+        val mockCandidate = GeminiCandidate(
+            content = GeminiContent(role = "model", parts = listOf(GeminiPart(text = "I am doing great"))),
+            finishReason = "STOP",
+            groundingMetadata = null
         )
-        val mockResponse = com.google.genai.kotlin.types.GenerateContentResponse(
-            candidates = listOf(mockCandidate)
+        val mockResponse = GeminiGenerateContentResponse(
+            candidates = listOf(mockCandidate),
+            usageMetadata = null
         )
 
-        val contentsSlot = slot<List<com.google.genai.kotlin.types.Content>>()
-        coEvery { mockModels.generateContent(
+        val requestSlot = slot<GeminiGenerateContentRequest>()
+        coEvery { apiService.generateContent(
             model = "gemini-1.5-flash",
-            contents = capture(contentsSlot),
-            config = any()
-        ) } returns mockResponse
+            apiKey = "AIzaSyFakeKey",
+            request = capture(requestSlot)
+        ) } returns Response.success(mockResponse)
 
         val result = repository.sendMessage(sessionId = sessionId, userPrompt = "How are you?", isWebSearchActive = true)
 
@@ -80,8 +77,8 @@ class ChatRepositoryTest {
         assertEquals("I am doing great", assistantMsg.content)
         assertEquals("assistant", assistantMsg.role)
 
-        val capturedContents = contentsSlot.captured
-        assertEquals(3, capturedContents.size)
+        val capturedRequest = requestSlot.captured
+        assertEquals(3, capturedRequest.contents.size)
     }
 
     @Test
@@ -135,42 +132,33 @@ class ChatRepositoryTest {
         coEvery { chatMessageDao.getMessagesForSessionSync(sessionId) } returns listOf(userMsg)
         every { preferencesManager.getGeminiApiKeySync() } returns "AIzaSyFakeKey"
 
-        val mockClient = mockk<com.google.genai.kotlin.Client>()
-        val mockModels = mockk<com.google.genai.kotlin.Models>()
-        every { repository.createGenAiClient(any()) } returns mockClient
-        every { mockClient.models } returns mockModels
-        
-        val mockWebSource = com.google.genai.kotlin.types.GroundingChunkWeb(uri = "https://example.com/news", title = "Latest News Example")
-        val mockChunk = com.google.genai.kotlin.types.GroundingChunk(web = mockWebSource)
-        val mockMetadata = com.google.genai.kotlin.types.GroundingMetadata(
+        val mockWebSource = GeminiWebSource(uri = "https://example.com/news", title = "Latest News Example")
+        val mockChunk = GeminiGroundingChunk(web = mockWebSource)
+        val mockMetadata = GeminiGroundingMetadata(
             webSearchQueries = listOf("What is the latest news"),
             groundingChunks = listOf(mockChunk),
-            searchEntryPoint = com.google.genai.kotlin.types.SearchEntryPoint(renderedContent = "Search Entry Point HTML")
+            searchEntryPoint = GeminiSearchEntryPoint(renderedContent = "Search Entry Point HTML")
         )
         
-        val mockCandidate = com.google.genai.kotlin.types.Candidate(
-            content = com.google.genai.kotlin.types.Content(role = "model", parts = listOf(com.google.genai.kotlin.types.Part(text = "Here is the news from example.com"))),
-            finishReason = com.google.genai.kotlin.types.FinishReason.STOP,
+        val mockCandidate = GeminiCandidate(
+            content = GeminiContent(role = "model", parts = listOf(GeminiPart(text = "Here is the news from example.com"))),
+            finishReason = "STOP",
             groundingMetadata = mockMetadata
         )
-        
-        val mockResponse = com.google.genai.kotlin.types.GenerateContentResponse(
+        val mockResponse = GeminiGenerateContentResponse(
             candidates = listOf(mockCandidate),
-            usageMetadata = com.google.genai.kotlin.types.GenerateContentResponseUsageMetadata(promptTokenCount = 10, candidatesTokenCount = 15, totalTokenCount = 25)
+            usageMetadata = GeminiUsageMetadata(promptTokenCount = 10, candidatesTokenCount = 15, totalTokenCount = 25)
         )
 
-        val configSlot = slot<com.google.genai.kotlin.types.GenerateContentConfig>()
-        
-        coEvery { mockModels.generateContent(
+        val requestSlot = slot<GeminiGenerateContentRequest>()
+        coEvery { apiService.generateContent(
             model = "gemini-1.5-flash",
-            contents = any(),
-            config = capture(configSlot)
-        ) } returns mockResponse
+            apiKey = "AIzaSyFakeKey",
+            request = capture(requestSlot)
+        ) } returns Response.success(mockResponse)
 
         val result = repository.sendMessage(sessionId = sessionId, userPrompt = "What is the latest news?", isWebSearchActive = true)
-        if (result is NetworkResult.Error) {
-            println("GEMINI_TEST_ERROR: ${result.message} / Exception: ${result.exception}")
-        }
+
         assertTrue(result is NetworkResult.Success)
         val assistantMsg = (result as NetworkResult.Success).data
         assertEquals("Here is the news from example.com", assistantMsg.content)
@@ -178,32 +166,91 @@ class ChatRepositoryTest {
         assertNotNull(assistantMsg.groundingMetadataJson)
         assertTrue(assistantMsg.groundingMetadataJson!!.contains("https://example.com/news"))
 
-        val capturedConfig = configSlot.captured
-        assertNotNull(capturedConfig.tools)
-        assertEquals(1, capturedConfig.tools!!.size)
-        assertNotNull(capturedConfig.tools!![0].googleSearch)
+        val capturedRequest = requestSlot.captured
+        assertNotNull(capturedRequest.tools)
+        assertEquals(1, capturedRequest.tools!!.size)
+        assertNotNull(capturedRequest.tools!![0].googleSearch)
     }
 
     @Test
-    fun `sendMessage updates message status to ERROR on SDK exception`() = runTest {
+    fun `sendMessage with non-Gemini model and search enabled maps model to gemini-2.5-flash`() = runTest {
+        val sessionId = "session-local"
+        val existingSession = ChatSessionEntity(id = sessionId, title = "New Chat", modelName = "meta-llama-3-8b")
+        val userMsg = ChatMessageEntity(id = "msg-1", sessionId = sessionId, role = "user", content = "Tell me the weather")
+
+        coEvery { chatSessionDao.getSessionById(sessionId) } returns existingSession
+        coEvery { chatMessageDao.getMessagesForSessionSync(sessionId) } returns listOf(userMsg)
+        every { preferencesManager.getGeminiApiKeySync() } returns "AIzaSyFakeKey"
+
+        val mockCandidate = GeminiCandidate(
+            content = GeminiContent(role = "model", parts = listOf(GeminiPart(text = "Weather is nice"))),
+            finishReason = "STOP",
+            groundingMetadata = null
+        )
+        val mockResponse = GeminiGenerateContentResponse(
+            candidates = listOf(mockCandidate),
+            usageMetadata = null
+        )
+
+        val modelSlot = slot<String>()
+        coEvery { apiService.generateContent(
+            model = capture(modelSlot),
+            apiKey = any(),
+            request = any()
+        ) } returns Response.success(mockResponse)
+
+        val result = repository.sendMessage(sessionId = sessionId, userPrompt = "Tell me the weather", isWebSearchActive = true)
+
+        assertTrue(result is NetworkResult.Success)
+        assertEquals("gemini-2.5-flash", modelSlot.captured)
+    }
+
+    @Test
+    fun `sendMessage with specific Gemini model and search disabled routes to Gemini API directly`() = runTest {
+        val sessionId = "session-specific-gemini"
+        val existingSession = ChatSessionEntity(id = sessionId, title = "New Chat", modelName = "gemini-3.5-flash")
+        val userMsg = ChatMessageEntity(id = "msg-1", sessionId = sessionId, role = "user", content = "Hello cloud")
+
+        coEvery { chatSessionDao.getSessionById(sessionId) } returns existingSession
+        coEvery { chatMessageDao.getMessagesForSessionSync(sessionId) } returns listOf(userMsg)
+        every { preferencesManager.getGeminiApiKeySync() } returns "AIzaSyFakeKey"
+
+        val mockCandidate = GeminiCandidate(
+            content = GeminiContent(role = "model", parts = listOf(GeminiPart(text = "Hello user"))),
+            finishReason = "STOP",
+            groundingMetadata = null
+        )
+        val mockResponse = GeminiGenerateContentResponse(
+            candidates = listOf(mockCandidate),
+            usageMetadata = null
+        )
+
+        val modelSlot = slot<String>()
+        val requestSlot = slot<GeminiGenerateContentRequest>()
+        coEvery { apiService.generateContent(
+            model = capture(modelSlot),
+            apiKey = any(),
+            request = capture(requestSlot)
+        ) } returns Response.success(mockResponse)
+
+        val result = repository.sendMessage(sessionId = sessionId, userPrompt = "Hello cloud", isWebSearchActive = false)
+
+        assertTrue(result is NetworkResult.Success)
+        assertEquals("gemini-3.5-flash", modelSlot.captured)
+        assertNull(requestSlot.captured.tools) // Search is disabled, so tools should be null
+    }
+
+    @Test
+    fun `sendMessage updates message status to ERROR on API exception`() = runTest {
         val sessionId = "session-123"
         val existingSession = ChatSessionEntity(id = sessionId, title = "New Chat", modelName = "gemini-1.5-flash")
         coEvery { chatSessionDao.getSessionById(sessionId) } returns existingSession
         coEvery { chatMessageDao.getMessagesForSessionSync(sessionId) } returns emptyList()
         every { preferencesManager.getGeminiApiKeySync() } returns "AIzaSyFakeKey"
 
-        val mockClient = mockk<com.google.genai.kotlin.Client>()
-        val mockModels = mockk<com.google.genai.kotlin.Models>()
-        every { repository.createGenAiClient(any()) } returns mockClient
-        every { mockClient.models } returns mockModels
+        coEvery { apiService.generateContent(any(), any(), any()) } throws RuntimeException("API Error")
 
-        coEvery { mockModels.generateContent(
-            model = any<String>(),
-            contents = any<List<com.google.genai.kotlin.types.Content>>(),
-            config = any<com.google.genai.kotlin.types.GenerateContentConfig>()
-        ) } throws RuntimeException("SDK Error")
-
-        val result = repository.sendMessage(sessionId = sessionId, userPrompt = "Test error")
+        val result = repository.sendMessage(sessionId = sessionId, userPrompt = "Test error", isWebSearchActive = true)
 
         assertTrue(result is NetworkResult.Error)
         coVerify { chatMessageDao.updateMessageStatus(any(), eq("ERROR")) }
@@ -298,5 +345,34 @@ class ChatRepositoryTest {
         assertEquals(sessionPrompt, messages[0].content)
         
         verify { preferencesManager.getSystemPromptSync(sessionModel) }
+    }
+
+    @Test
+    fun `fetchGeminiModels parses available models and filters correctly`() = runTest {
+        every { preferencesManager.getGeminiApiKeySync() } returns "AIzaSyFakeKey"
+        
+        val mockModels = listOf(
+            GeminiModelData(
+                name = "models/gemini-2.5-flash",
+                displayName = "Gemini 2.5 Flash",
+                description = "Flash model",
+                supportedGenerationMethods = listOf("generateContent", "countTokens")
+            ),
+            GeminiModelData(
+                name = "models/gemini-embedding",
+                displayName = "Gemini Embedding",
+                description = "Embedding model",
+                supportedGenerationMethods = listOf("embedContent")
+            )
+        )
+        val mockResponse = GeminiModelListResponse(models = mockModels)
+        coEvery { apiService.getGeminiModels("AIzaSyFakeKey") } returns Response.success(mockResponse)
+
+        val result = repository.fetchGeminiModels()
+
+        assertTrue(result is NetworkResult.Success)
+        val list = (result as NetworkResult.Success).data
+        assertEquals(1, list.size)
+        assertEquals("gemini-2.5-flash", list[0])
     }
 }

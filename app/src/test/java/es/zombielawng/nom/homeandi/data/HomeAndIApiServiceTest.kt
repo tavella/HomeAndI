@@ -152,11 +152,11 @@ class HomeAndIApiServiceTest {
             tools = listOf(GeminiTool(googleSearch = emptyMap()))
         )
 
-        val response = apiService.generateContent("gemini-1.5-flash", requestPayload)
+        val response = apiService.generateContent("gemini-1.5-flash", "test-api-key", requestPayload)
 
         val recordedRequest = mockWebServer.takeRequest()
         assertEquals("POST", recordedRequest.method)
-        assertEquals("/v1beta/models/gemini-1.5-flash:generateContent", recordedRequest.path)
+        assertEquals("/v1beta/models/gemini-1.5-flash:generateContent?key=test-api-key", recordedRequest.path)
 
         val bodyText = recordedRequest.body.readUtf8()
         assertTrue(bodyText.contains("Grounding test prompt"))
