@@ -224,14 +224,93 @@ fun ChatScreen(
     ) {
         Scaffold(
             topBar = {
+                var isEditingName by remember { mutableStateOf(false) }
+                var editedName by remember(state.activeSession?.title) {
+                    mutableStateOf(state.activeSession?.title ?: "")
+                }
+
                 TopAppBar(
                     title = {
                         Column {
-                            Text(
-                                text = state.activeSession?.title ?: "HomeAndI",
-                                maxLines = 1,
-                                style = MaterialTheme.typography.titleLarge
-                            )
+                            if (isEditingName) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.fillMaxWidth().padding(end = 8.dp)
+                                ) {
+                                    androidx.compose.foundation.text.BasicTextField(
+                                        value = editedName,
+                                        onValueChange = { editedName = it },
+                                        textStyle = MaterialTheme.typography.titleLarge.copy(color = MaterialTheme.colorScheme.onSurface),
+                                        singleLine = true,
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .background(
+                                                MaterialTheme.colorScheme.surfaceVariant,
+                                                RoundedCornerShape(4.dp)
+                                            )
+                                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                                        cursorBrush = androidx.compose.ui.graphics.SolidColor(MaterialTheme.colorScheme.primary)
+                                    )
+                                    Spacer(Modifier.width(4.dp))
+                                    IconButton(
+                                        onClick = { 
+                                            state.activeSession?.id?.let { sessionId ->
+                                                if (editedName.isNotBlank()) {
+                                                    viewModel.renameSession(sessionId, editedName)
+                                                }
+                                            }
+                                            isEditingName = false
+                                        },
+                                        modifier = Modifier.size(32.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.Check,
+                                            contentDescription = "Save Title",
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+                                    IconButton(
+                                        onClick = { 
+                                            editedName = state.activeSession?.title ?: ""
+                                            isEditingName = false 
+                                        },
+                                        modifier = Modifier.size(32.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.Close,
+                                            contentDescription = "Cancel Editing",
+                                            tint = MaterialTheme.colorScheme.error,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+                                }
+                            } else {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.fillMaxWidth().padding(end = 8.dp)
+                                ) {
+                                    Text(
+                                        text = state.activeSession?.title ?: "HomeAndI",
+                                        maxLines = 1,
+                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                        style = MaterialTheme.typography.titleLarge,
+                                        modifier = Modifier.weight(1f, fill = false)
+                                    )
+                                    Spacer(Modifier.width(4.dp))
+                                    IconButton(
+                                        onClick = { isEditingName = true },
+                                        modifier = Modifier.size(24.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.Edit,
+                                            contentDescription = "Rename Chat",
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                }
+                            }
                             Row(
                                 modifier = Modifier.clickable { 
                                     viewModel.fetchLoadedModels()
@@ -343,7 +422,12 @@ fun ChatScreen(
                                     Spacer(modifier = Modifier.width(12.dp))
                                     Text(
                                         text = if (state.activeSession?.id == state.generatingSessionId) {
-                                            "${getCleanModelName(state.activeSession?.modelName)} is thinking..."
+                                            val modelName = getCleanModelName(state.activeSession?.modelName)
+                                            if (state.isWebSearchActive && state.isWebSearchEnabled) {
+                                                "$modelName + online search is thinking..."
+                                            } else {
+                                                "$modelName is thinking..."
+                                            }
                                         } else {
                                             "Another conversation is processing. Please wait until it has finished or manually stop it."
                                         },
@@ -432,7 +516,7 @@ fun ChatScreen(
                             IconButton(onClick = { viewModel.toggleWebSearch() }) {
                                 Icon(
                                     imageVector = Icons.Rounded.Language,
-                                    contentDescription = "Toggle Web Search",
+                                    contentDescription = "Google Grounded Search",
                                     tint = if (state.isWebSearchActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
                                 )
                             }
@@ -604,12 +688,14 @@ fun ChatScreen(
     if (showNewSessionModelDialog) {
         ModelSelectionDialog(
             title = "Start New Chat",
-            loadedModels = state.loadedModels,
-            geminiModels = state.geminiModels,
+            availableModels = state.availableModels,
             onModelSelected = { modelId ->
                 viewModel.createNewSession(modelId = modelId)
                 showNewSessionModelDialog = false
             },
+            onLoadModel = { viewModel.loadModel(it) },
+            onUnloadModel = { viewModel.unloadModel(it) },
+            isModelActionLoading = state.isModelActionLoading,
             onDismiss = { showNewSessionModelDialog = false }
         )
     }
@@ -618,14 +704,16 @@ fun ChatScreen(
     if (showSwitchModelDialog) {
         ModelSelectionDialog(
             title = "Switch Model for this Chat",
-            loadedModels = state.loadedModels,
-            geminiModels = state.geminiModels,
+            availableModels = state.availableModels,
             onModelSelected = { modelId ->
                 state.activeSession?.id?.let { sessionId ->
                     viewModel.updateSessionModel(sessionId, modelId)
                 }
                 showSwitchModelDialog = false
             },
+            onLoadModel = { viewModel.loadModel(it) },
+            onUnloadModel = { viewModel.unloadModel(it) },
+            isModelActionLoading = state.isModelActionLoading,
             onDismiss = { showSwitchModelDialog = false }
         )
     }
@@ -634,79 +722,145 @@ fun ChatScreen(
 @Composable
 fun ModelSelectionDialog(
     title: String,
-    loadedModels: List<ModelData>,
-    geminiModels: List<String>,
+    availableModels: List<ModelData>,
     onModelSelected: (String) -> Unit,
+    onLoadModel: (String) -> Unit,
+    onUnloadModel: (String) -> Unit,
+    isModelActionLoading: Boolean,
     onDismiss: () -> Unit
 ) {
-    val displayGeminiModels = geminiModels.ifEmpty {
-        listOf(
-            "gemini-2.5-flash",
-            "gemini-2.5-pro",
-            "gemini-3.5-flash",
-            "gemini-3.6-flash",
-            "gemini-3.7-flash"
-        )
-    }
+    val loaded = availableModels.filter { it.isLoaded }
+    val unloaded = availableModels.filter { !it.isLoaded }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = {
-            LazyColumn(
-                modifier = Modifier.fillMaxWidth().heightIn(max = 400.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                if (loadedModels.isNotEmpty()) {
-                    item {
-                        Text(
-                            text = "Local Models (RAM)",
-                            style = MaterialTheme.typography.titleSmall,
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.padding(vertical = 4.dp)
-                        )
-                    }
-                    items(loadedModels, key = { "local_${it.id}" }) { model ->
-                        Card(
-                            onClick = { onModelSelected(model.id) },
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-                        ) {
-                            Column(Modifier.padding(12.dp)) {
-                                Text(model.displayName ?: model.id, style = MaterialTheme.typography.bodyLarge)
-                                Text(model.id, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+            Column(modifier = Modifier.fillMaxWidth()) {
+                if (isModelActionLoading) {
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 400.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    if (loaded.isNotEmpty()) {
+                        item {
+                            Text(
+                                text = "Loaded Models (Active)",
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(vertical = 4.dp)
+                            )
+                        }
+                        items(loaded, key = { "loaded_${it.id}" }) { model ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Card(
+                                    onClick = { onModelSelected(model.id) },
+                                    modifier = Modifier.weight(1f),
+                                    enabled = !isModelActionLoading,
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = MaterialTheme.colorScheme.primaryContainer
+                                    )
+                                ) {
+                                    Column(Modifier.padding(12.dp)) {
+                                        Text(
+                                            model.displayName ?: model.id,
+                                            style = MaterialTheme.typography.bodyLarge,
+                                            fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                                        )
+                                        Text(
+                                            model.id,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                                        )
+                                    }
+                                }
+                                Spacer(modifier = Modifier.width(8.dp))
+                                val instanceId = model.loadedInstances?.firstOrNull()?.id ?: model.id
+                                IconButton(
+                                    onClick = { onUnloadModel(instanceId) },
+                                    enabled = !isModelActionLoading,
+                                    colors = IconButtonDefaults.iconButtonColors(
+                                        contentColor = MaterialTheme.colorScheme.error
+                                    )
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Eject,
+                                        contentDescription = "Unload Model"
+                                    )
+                                }
                             }
                         }
                     }
-                } else {
-                    item {
-                        Text(
-                            text = "No local models loaded. Go to Settings to load them.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.outline,
-                            modifier = Modifier.padding(vertical = 4.dp)
-                        )
+
+                    if (unloaded.isNotEmpty()) {
+                        item {
+                            Text(
+                                text = "Unloaded Models (Available)",
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.outline,
+                                modifier = Modifier.padding(vertical = 4.dp)
+                            )
+                        }
+                        items(unloaded, key = { "unloaded_${it.id}" }) { model ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Card(
+                                    onClick = { /* Unloaded models cannot be selected directly until loaded */ },
+                                    modifier = Modifier.weight(1f),
+                                    enabled = false,
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                                    )
+                                ) {
+                                    Column(Modifier.padding(12.dp)) {
+                                        Text(
+                                            model.displayName ?: model.id,
+                                            style = MaterialTheme.typography.bodyLarge,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                                        )
+                                        Text(
+                                            model.id,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.6f)
+                                        )
+                                    }
+                                }
+                                Spacer(modifier = Modifier.width(8.dp))
+                                IconButton(
+                                    onClick = { onLoadModel(model.id) },
+                                    enabled = !isModelActionLoading,
+                                    colors = IconButtonDefaults.iconButtonColors(
+                                        contentColor = MaterialTheme.colorScheme.primary
+                                    )
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.PlayArrow,
+                                        contentDescription = "Load Model"
+                                    )
+                                }
+                            }
+                        }
                     }
-                }
 
-                item {
-                    Text(
-                        text = "Gemini Cloud Models (Web Search)",
-                        style = MaterialTheme.typography.titleSmall,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.padding(vertical = 4.dp)
-                    )
-                }
-
-                items(displayGeminiModels, key = { "gemini_$it" }) { modelName ->
-                    Card(
-                        onClick = { onModelSelected(modelName) },
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-                    ) {
-                        Column(Modifier.padding(12.dp)) {
-                            Text(modelName, style = MaterialTheme.typography.bodyLarge)
-                            Text("Google Gemini API", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+                    if (loaded.isEmpty() && unloaded.isEmpty()) {
+                        item {
+                            Text(
+                                text = "No local models found on the server.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.outline,
+                                modifier = Modifier.padding(vertical = 4.dp)
+                            )
                         }
                     }
                 }

@@ -28,7 +28,6 @@ fun SettingsScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     var expanded by remember { mutableStateOf(false) }
     var showApiKey by remember { mutableStateOf(false) }
-    var showGeminiApiKey by remember { mutableStateOf(false) }
     var modelToDelete by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(state.saveMessage) {
@@ -137,6 +136,21 @@ fun SettingsScreen(
                             onCheckedChange = { viewModel.updateScreenshotsEnabled(it) }
                         )
                     }
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column {
+                            Text(text = "Enable Web Search Tool", style = MaterialTheme.typography.bodyLarge)
+                            Text(text = "Allows local LLMs to perform client-side web searches", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.outline)
+                        }
+                        Switch(
+                            checked = state.isWebSearchEnabled,
+                            onCheckedChange = { viewModel.updateWebSearchEnabled(it) }
+                        )
+                    }
                 }
             }
 
@@ -225,25 +239,7 @@ fun SettingsScreen(
                 singleLine = true
             )
 
-            OutlinedTextField(
-                value = state.geminiApiKey,
-                onValueChange = { viewModel.updateGeminiApiKey(it) },
-                label = { Text("Gemini API Key") },
-                placeholder = { Text("AIzaSy...") },
-                leadingIcon = { Icon(Icons.Rounded.Key, contentDescription = null) },
-                trailingIcon = {
-                    IconButton(onClick = { showGeminiApiKey = !showGeminiApiKey }) {
-                        Icon(
-                            imageVector = if (showGeminiApiKey) Icons.Rounded.VisibilityOff else Icons.Rounded.Visibility,
-                            contentDescription = if (showGeminiApiKey) "Hide Gemini API key" else "Show Gemini API key"
-                        )
-                    }
-                },
-                visualTransformation = if (showGeminiApiKey) VisualTransformation.None else PasswordVisualTransformation(),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true
-            )
+
 
             Button(
                 onClick = { viewModel.saveSettings() },

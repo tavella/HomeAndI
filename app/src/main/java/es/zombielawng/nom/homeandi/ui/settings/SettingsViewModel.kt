@@ -28,8 +28,7 @@ data class SettingsUiState(
     val modelActionMessage: String? = null,
     val isScreenshotsEnabled: Boolean = true,
     val themeMode: String = "system",
-    val isWebSearchEnabled: Boolean = false,
-    val geminiApiKey: String = ""
+    val isWebSearchEnabled: Boolean = false
 )
 
 class SettingsViewModel(
@@ -57,8 +56,7 @@ class SettingsViewModel(
                 isDarkMode = preferencesManager.getDarkModeSync(),
                 isScreenshotsEnabled = preferencesManager.getScreenshotsEnabledSync(),
                 themeMode = preferencesManager.getThemeModeSync(),
-                isWebSearchEnabled = preferencesManager.getWebSearchEnabledSync(),
-                geminiApiKey = preferencesManager.getGeminiApiKeySync()
+                isWebSearchEnabled = preferencesManager.getWebSearchEnabledSync()
             )
         }
     }
@@ -78,10 +76,7 @@ class SettingsViewModel(
         preferencesManager.updateWebSearchEnabled(enabled)
     }
 
-    fun updateGeminiApiKey(key: String) {
-        _uiState.update { it.copy(geminiApiKey = key) }
-        preferencesManager.updateGeminiApiKey(key)
-    }
+
 
 
 

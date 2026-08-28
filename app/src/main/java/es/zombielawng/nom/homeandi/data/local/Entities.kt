@@ -33,7 +33,10 @@ data class ChatMessageEntity(
     val attachmentPathsJson: String = "[]", // Serialized JSON array of file paths / URIs
     val timestamp: Long = System.currentTimeMillis(),
     val status: String = "SENT", // "SENT", "PENDING", "ERROR"
-    val groundingMetadataJson: String? = null
+    val groundingMetadataJson: String? = null,
+    val toolCallId: String? = null,
+    val toolCallsJson: String? = null,
+    val name: String? = null
 )
 
 @Dao

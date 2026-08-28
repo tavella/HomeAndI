@@ -38,8 +38,7 @@ class ServerPreferencesManager(context: Context) {
     private val _webSearchEnabledFlow = MutableStateFlow(getWebSearchEnabledSync())
     val webSearchEnabledFlow: Flow<Boolean> = _webSearchEnabledFlow.asStateFlow()
 
-    private val _geminiApiKeyFlow = MutableStateFlow(getGeminiApiKeySync())
-    val geminiApiKeyFlow: Flow<String> = _geminiApiKeyFlow.asStateFlow()
+
 
 
 
@@ -149,14 +148,7 @@ class ServerPreferencesManager(context: Context) {
         _webSearchEnabledFlow.value = enabled
     }
 
-    fun getGeminiApiKeySync(): String {
-        return prefs.getString(KEY_GEMINI_API_KEY, "") ?: ""
-    }
 
-    fun updateGeminiApiKey(key: String) {
-        prefs.edit().putString(KEY_GEMINI_API_KEY, key.trim()).apply()
-        _geminiApiKeyFlow.value = key.trim()
-    }
 
 
 
@@ -172,7 +164,7 @@ class ServerPreferencesManager(context: Context) {
         const val KEY_SCREENSHOTS_ENABLED = "screenshots_enabled"
         const val KEY_THEME_SELECTION = "theme_selection"
         const val KEY_WEB_SEARCH_ENABLED = "web_search_enabled"
-        const val KEY_GEMINI_API_KEY = "gemini_api_key"
+
 
 
         const val DEFAULT_HOST = "10.0.2.2" // Emulator default targeting host machine

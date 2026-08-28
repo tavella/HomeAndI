@@ -16,10 +16,7 @@ class DynamicUrlInterceptor(
         val originalRequest = chain.request()
         val originalUrl = originalRequest.url
 
-        // Bypass dynamic URL rewriting for native Gemini API requests
-        if (originalUrl.host.contains("generativelanguage.googleapis.com", ignoreCase = true)) {
-            return chain.proceed(originalRequest)
-        }
+
 
         val targetHost = preferencesManager.getHostSync()
         val targetPort = preferencesManager.getPortSync()

@@ -50,16 +50,6 @@ interface HomeAndIApiService {
         @Path(value = "model_id", encoded = true) modelId: String
     ): Response<Unit>
 
-    @POST("https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent")
-    suspend fun generateContent(
-        @Path("model") model: String,
-        @retrofit2.http.Query("key") apiKey: String,
-        @Body request: GeminiGenerateContentRequest
-    ): Response<GeminiGenerateContentResponse>
 
-    @GET("https://generativelanguage.googleapis.com/v1beta/models")
-    suspend fun getGeminiModels(
-        @retrofit2.http.Query("key") apiKey: String
-    ): Response<GeminiModelListResponse>
 
 }

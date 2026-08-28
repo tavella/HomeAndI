@@ -100,183 +100,271 @@ open class ChatRepository(
             )
         }
 
-        // 2. Fetch full contiguous history from Room DB
-        val historyEntities = chatMessageDao.getMessagesForSessionSync(sessionId)
-
-        // 3. Build API message list (System prompt + historical context)
-        val apiMessages = mutableListOf<ApiMessage>()
-
+        // 2. Fetch full contiguous history from Room DB and resolve configuration
         val session = chatSessionDao.getSessionById(sessionId)
         val model = session?.modelName ?: preferencesManager.getModelSync()
 
-        val systemPrompt = preferencesManager.getSystemPromptSync(model)
+        // Strict boundary: Only allow web search when both settings switch and globe are active
+        val isSearchAllowed = isWebSearchActive && preferencesManager.getWebSearchEnabledSync()
+
+        var loopCount = 0
+        val maxLoops = 5
+        var finalMsg: ChatMessageEntity? = null
+
+        try {
+            while (loopCount < maxLoops) {
+                loopCount++
+                val historyEntities = chatMessageDao.getMessagesForSessionSync(sessionId)
+                val apiMessages = buildApiMessages(historyEntities, model, isSearchAllowed)
+
+                val request = ChatCompletionRequest(
+                    model = model,
+                    messages = apiMessages,
+                    temperature = 0.7,
+                    tools = if (isSearchAllowed) listOf(fetchWebDataTool) else null
+                )
+
+                val response = apiService.createChatCompletion(request)
+                if (response.isSuccessful && response.body() != null) {
+                    val body = response.body()!!
+                    val choice = body.choices?.firstOrNull()
+                    val responseMsg = choice?.message
+                    val assistantContent = responseMsg?.content ?: ""
+                    val toolCalls = responseMsg?.toolCalls
+
+                    if (!toolCalls.isNullOrEmpty()) {
+                        // Insert the assistant message with tool calls
+                        val assistantMsgId = UUID.randomUUID().toString()
+                        val assistantMsg = ChatMessageEntity(
+                            id = assistantMsgId,
+                            sessionId = sessionId,
+                            role = "assistant",
+                            content = assistantContent,
+                            timestamp = System.currentTimeMillis(),
+                            status = "SENT",
+                            toolCallsJson = gson.toJson(toolCalls)
+                        )
+                        chatMessageDao.insertMessage(assistantMsg)
+
+                        // Process each tool call
+                        for (toolCall in toolCalls) {
+                            if (toolCall.function.name == "fetch_web_data") {
+                                val argsStr = toolCall.function.arguments
+                                val url = parseUrlFromArgs(argsStr)
+                                val toolResultText = if (!url.isNullOrBlank()) {
+                                    executeFetchWebData(url)
+                                } else {
+                                    "Error: URL not found or invalid format in tool arguments."
+                                }
+
+                                // Insert the tool result message
+                                val toolMsgId = UUID.randomUUID().toString()
+                                val toolMsg = ChatMessageEntity(
+                                    id = toolMsgId,
+                                    sessionId = sessionId,
+                                    role = "tool",
+                                    content = toolResultText,
+                                    timestamp = System.currentTimeMillis(),
+                                    status = "SENT",
+                                    toolCallId = toolCall.id,
+                                    name = "fetch_web_data"
+                                )
+                                chatMessageDao.insertMessage(toolMsg)
+                            }
+                        }
+                    } else {
+                        // Final text response
+                        val assistantMsgId = UUID.randomUUID().toString()
+                        val assistantMsg = ChatMessageEntity(
+                            id = assistantMsgId,
+                            sessionId = sessionId,
+                            role = "assistant",
+                            content = assistantContent,
+                            timestamp = System.currentTimeMillis(),
+                            status = "SENT"
+                        )
+                        chatMessageDao.insertMessage(assistantMsg)
+                        finalMsg = assistantMsg
+                        break
+                    }
+                } else {
+                    val errorMsg = "HTTP ${response.code()}: ${response.errorBody()?.string() ?: response.message()}"
+                    chatMessageDao.updateMessageStatus(userMsgId, status = "ERROR")
+                    return@withContext NetworkResult.Error(errorMsg)
+                }
+            }
+
+            if (finalMsg != null) {
+                NetworkResult.Success(finalMsg)
+            } else {
+                chatMessageDao.updateMessageStatus(userMsgId, status = "ERROR")
+                NetworkResult.Error("Local model tool call loop reached max iterations ($maxLoops) without final response.")
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            chatMessageDao.updateMessageStatus(userMsgId, status = "ERROR")
+            throw e
+        } catch (e: Exception) {
+            chatMessageDao.updateMessageStatus(userMsgId, status = "ERROR")
+            NetworkResult.Error("Network error: ${e.localizedMessage ?: "Connection failed"}", e)
+        }
+    }
+
+    private val fetchWebDataTool = ChatToolDefinition(
+        type = "function",
+        function = ChatFunctionDefinition(
+            name = "fetch_web_data",
+            description = "Fetches the raw text content or HTML from a given URL to retrieve up-to-date information.",
+            parameters = ChatFunctionParameters(
+                type = "object",
+                properties = mapOf(
+                    "url" to ChatFunctionProperty(
+                        type = "string",
+                        description = "The absolute URL to fetch (e.g., https://example.com/api/data or https://news.ycombinator.com)."
+                    )
+                ),
+                required = listOf("url")
+            )
+        )
+    )
+
+    private val nativeHttpClient = okhttp3.OkHttpClient.Builder()
+        .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+        .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+        .build()
+
+    private suspend fun executeFetchWebData(urlStr: String): String = withContext(Dispatchers.IO) {
+        try {
+            val request = okhttp3.Request.Builder()
+                .url(urlStr)
+                .header("User-Agent", "Mozilla/5.0 (Android; Mobile; rv:100.0) Gecko/100.0 Firefox/100.0")
+                .build()
+            nativeHttpClient.newCall(request).execute().use { response ->
+                if (response.isSuccessful) {
+                    val body = response.body?.string() ?: ""
+                    val cleanText = cleanHtml(body)
+                    if (cleanText.length > 8000) {
+                        cleanText.take(8000) + "\n... [Content Truncated] ..."
+                    } else {
+                        cleanText
+                    }
+                } else {
+                    "Error: HTTP ${response.code} trying to fetch $urlStr"
+                }
+            }
+        } catch (e: Exception) {
+            "Error fetching URL: ${e.localizedMessage ?: e.message ?: "Unknown error"}"
+        }
+    }
+
+    private fun cleanHtml(html: String): String {
+        var text = html.replace(Regex("<script[\\s\\S]*?>[\\s\\S]*?</script>", RegexOption.IGNORE_CASE), "")
+        text = text.replace(Regex("<style[\\s\\S]*?>[\\s\\S]*?</style>", RegexOption.IGNORE_CASE), "")
+        text = text.replace(Regex("<[\\s\\S]*?>"), " ")
+        text = text.replace("&nbsp;", " ")
+            .replace("&amp;", "&")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&quot;", "\"")
+            .replace("&apos;", "'")
+        
+        val lines = text.split("\n")
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+        return lines.joinToString("\n")
+    }
+
+    private fun parseUrlFromArgs(argsString: String): String? {
+        try {
+            val jsonObject = gson.fromJson(argsString, com.google.gson.JsonObject::class.java)
+            if (jsonObject.has("url")) {
+                return jsonObject.get("url").asString
+            }
+        } catch (e: Exception) {
+            val pattern = java.util.regex.Pattern.compile("https?://\\S+")
+            val matcher = pattern.matcher(argsString)
+            if (matcher.find()) {
+                var url = matcher.group()
+                url = url.trim { it == '"' || it == '}' || it == ']' || it == ' ' || it == '\'' || it == ',' }
+                return url
+            }
+        }
+        return null
+    }
+
+    private fun buildApiMessages(
+        historyEntities: List<ChatMessageEntity>,
+        model: String,
+        isSearchAllowed: Boolean
+    ): List<ApiMessage> {
+        val apiMessages = mutableListOf<ApiMessage>()
+        val baseSystemPrompt = preferencesManager.getSystemPromptSync(model)
+        val systemPrompt = if (isSearchAllowed) {
+            val toolInstruction = """
+                You have access to a tool named `fetch_web_data`.
+                You MUST use it when the user asks for up-to-date information, search queries, real-time facts, news, or the contents of a specific web URL.
+                To retrieve web data, call the `fetch_web_data` tool with the absolute target URL.
+                Once you receive the content from the tool, synthesize the information and answer the user's question accurately. Do not cite fake sources.
+            """.trimIndent()
+            if (baseSystemPrompt.isBlank()) {
+                toolInstruction
+            } else {
+                "$baseSystemPrompt\n\n$toolInstruction"
+            }
+        } else {
+            baseSystemPrompt
+        }
+
         if (systemPrompt.isNotBlank()) {
             apiMessages.add(ApiMessage(role = "system", content = systemPrompt))
         }
 
-        val lastIdx = historyEntities.lastIndex
-        for (i in historyEntities.indices) {
-            val entity = historyEntities[i]
+        for (entity in historyEntities) {
             val contentToSend = entity.content
-
             val parts = parseAttachments(entity.attachmentPathsJson)
+            
+            val toolCalls = if (!entity.toolCallsJson.isNullOrBlank()) {
+                try {
+                    val type = object : TypeToken<List<ChatToolCall>>() {}.type
+                    gson.fromJson<List<ChatToolCall>>(entity.toolCallsJson, type)
+                } catch (e: Exception) {
+                    null
+                }
+            } else {
+                null
+            }
+
             if (parts.isNotEmpty() && entity.role == "user") {
                 val contentParts = mutableListOf<Any>()
-                if (contentToSend is String && contentToSend.isNotBlank()) {
+                if (contentToSend.isNotBlank()) {
                     contentParts.add(TextContentPart(text = contentToSend))
                 }
                 for (path in parts) {
                     val dataUrl = ImageUtils.pathToBase64DataUrl(context, path)
                     contentParts.add(ImageUrlContentPart(imageUrl = ImageUrlDetail(url = dataUrl)))
                 }
-                apiMessages.add(ApiMessage(role = entity.role, content = contentParts))
-            } else {
-                apiMessages.add(ApiMessage(role = entity.role, content = contentToSend))
-            }
-        }
-
-        val isGeminiModel = model.startsWith("gemini", ignoreCase = true)
-        if (isWebSearchActive || isGeminiModel) {
-            val geminiApiKey = preferencesManager.getGeminiApiKeySync()
-            val geminiContents = convertToGeminiContents(apiMessages)
-            
-            val tools = if (isWebSearchActive) {
-                listOf(GeminiTool(googleSearch = emptyMap()))
-            } else {
-                null
-            }
-
-            val geminiRequest = GeminiGenerateContentRequest(
-                contents = geminiContents,
-                tools = tools,
-                generationConfig = GeminiGenerationConfig(temperature = 0.7),
-                systemInstruction = if (systemPrompt.isNotBlank()) {
-                    GeminiContent(
-                        role = "system",
-                        parts = listOf(GeminiPart(text = systemPrompt))
+                apiMessages.add(
+                    ApiMessage(
+                        role = entity.role,
+                        content = contentParts,
+                        toolCallId = entity.toolCallId,
+                        name = entity.name,
+                        toolCalls = toolCalls
                     )
-                } else null
-            )
-
-            // Since gemini-1.5-flash is not supported on this specific key, use gemini-2.5-flash as the default fallback.
-            val targetModel = if (isGeminiModel) {
-                if (model == "gemini-1.5-flash") "gemini-2.5-flash" else model
-            } else {
-                "gemini-2.5-flash"
-            }
-
-            try {
-                val response = apiService.generateContent(
-                    model = targetModel,
-                    apiKey = geminiApiKey,
-                    request = geminiRequest
                 )
-
-                if (response.isSuccessful && response.body() != null) {
-                    val body = response.body()!!
-                    val candidate = body.candidates?.firstOrNull()
-                    val assistantReplyText = candidate?.content?.parts?.firstOrNull()?.text
-                        ?: "No content returned by Gemini."
-                    val groundingMetadata = candidate?.groundingMetadata
-                    val groundingMetadataJson = if (groundingMetadata != null) {
-                        gson.toJson(groundingMetadata)
-                    } else {
-                        null
-                    }
-
-                    val assistantMsg = ChatMessageEntity(
-                        id = UUID.randomUUID().toString(),
-                        sessionId = sessionId,
-                        role = "assistant",
-                        content = assistantReplyText,
-                        timestamp = System.currentTimeMillis(),
-                        status = "SENT",
-                        groundingMetadataJson = groundingMetadataJson
+            } else {
+                apiMessages.add(
+                    ApiMessage(
+                        role = entity.role,
+                        content = contentToSend,
+                        toolCallId = entity.toolCallId,
+                        name = entity.name,
+                        toolCalls = toolCalls
                     )
-                    chatMessageDao.insertMessage(assistantMsg)
-                    NetworkResult.Success(assistantMsg)
-                } else {
-                    val errorMsg = "HTTP ${response.code()}: ${response.errorBody()?.string() ?: response.message()}"
-                    chatMessageDao.updateMessageStatus(userMsgId, status = "ERROR")
-                    NetworkResult.Error(errorMsg)
-                }
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                chatMessageDao.updateMessageStatus(userMsgId, status = "ERROR")
-                throw e
-            } catch (e: Exception) {
-                chatMessageDao.updateMessageStatus(userMsgId, status = "ERROR")
-                NetworkResult.Error("Network error: ${e.localizedMessage ?: "Connection failed"}", e)
-            }
-        } else {
-            val request = ChatCompletionRequest(
-                model = model,
-                messages = apiMessages,
-                temperature = 0.7,
-                tools = null
-            )
-
-            try {
-                val response = apiService.createChatCompletion(request)
-                if (response.isSuccessful && response.body() != null) {
-                    val body = response.body()!!
-                    val assistantReplyText = body.choices?.firstOrNull()?.message?.content
-                        ?: "No content returned by HomeAndI."
-
-                    val assistantMsg = ChatMessageEntity(
-                        id = UUID.randomUUID().toString(),
-                        sessionId = sessionId,
-                        role = "assistant",
-                        content = assistantReplyText,
-                        timestamp = System.currentTimeMillis(),
-                        status = "SENT",
-                        groundingMetadataJson = null
-                    )
-                    chatMessageDao.insertMessage(assistantMsg)
-                    NetworkResult.Success(assistantMsg)
-                } else {
-                    val errorMsg = "HTTP ${response.code()}: ${response.errorBody()?.string() ?: response.message()}"
-                    chatMessageDao.updateMessageStatus(userMsgId, status = "ERROR")
-                    NetworkResult.Error(errorMsg)
-                }
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                chatMessageDao.updateMessageStatus(userMsgId, status = "ERROR")
-                throw e
-            } catch (e: Exception) {
-                chatMessageDao.updateMessageStatus(userMsgId, status = "ERROR")
-                NetworkResult.Error("Network error: ${e.localizedMessage ?: "Connection failed"}", e)
+                )
             }
         }
+        return apiMessages
     }
-
-    private fun convertToGeminiContents(apiMessages: List<ApiMessage>): List<GeminiContent> {
-        return apiMessages.filter { it.role != "system" }.map { msg ->
-            val role = when (msg.role) {
-                "user" -> "user"
-                "assistant" -> "model"
-                else -> "user"
-            }
-            val parts = when (val content = msg.content) {
-                is String -> listOf(GeminiPart(text = content))
-                is List<*> -> {
-                    content.mapNotNull { part ->
-                        when (part) {
-                            is TextContentPart -> GeminiPart(text = part.text)
-                            is ImageUrlContentPart -> {
-                                val base64Data = part.imageUrl.url.substringAfter("base64,")
-                                val mimeType = part.imageUrl.url.substringBefore(";base64,").substringAfter("data:")
-                                GeminiPart(inlineData = GeminiInlineData(mimeType = mimeType, data = base64Data))
-                            }
-                            else -> null
-                        }
-                    }
-                }
-                else -> listOf(GeminiPart(text = content.toString()))
-            }
-            GeminiContent(role = role, parts = parts)
-        }
-    }
-
-
 
     /**
      * Executes ping/connectivity test against HomeAndI server (/v1/models).
@@ -473,26 +561,6 @@ open class ChatRepository(
         }
     }
 
-    suspend fun fetchGeminiModels(): NetworkResult<List<String>> = withContext(Dispatchers.IO) {
-        try {
-            val geminiApiKey = preferencesManager.getGeminiApiKeySync()
-            if (geminiApiKey.isBlank()) {
-                return@withContext NetworkResult.Error("Gemini API key is not configured.")
-            }
-            val response = apiService.getGeminiModels(geminiApiKey)
-            if (response.isSuccessful && response.body() != null) {
-                val modelsList = response.body()!!.models ?: emptyList()
-                val names = modelsList
-                    .filter { it.supportedGenerationMethods?.contains("generateContent") == true }
-                    .map { it.name.substringAfter("models/") }
-                NetworkResult.Success(names)
-            } else {
-                NetworkResult.Error("HTTP ${response.code()}: ${response.errorBody()?.string() ?: response.message()}")
-            }
-        } catch (e: Exception) {
-            NetworkResult.Error("Error fetching Gemini models: ${e.localizedMessage}")
-        }
-    }
 
     private fun parseAttachments(json: String): List<String> {
         return try {

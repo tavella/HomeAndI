@@ -51,7 +51,7 @@ class ChatViewModel(
                 _uiState.update { 
                     it.copy(
                         isWebSearchEnabled = enabled,
-                        isWebSearchActive = if (enabled) it.isWebSearchActive else false
+                        isWebSearchActive = if (enabled) true else false
                     ) 
                 }
             }
@@ -106,7 +106,10 @@ class ChatViewModel(
         messageSubscriptionJob?.cancel()
         messageSubscriptionJob = viewModelScope.launch {
             repository.getMessagesForSession(sessionId).collect { messageList ->
-                _uiState.update { it.copy(messages = messageList) }
+                val filteredList = messageList.filter { msg ->
+                    msg.role.lowercase() != "tool" && msg.toolCallsJson.isNullOrBlank()
+                }
+                _uiState.update { it.copy(messages = filteredList) }
             }
         }
         observeWorkStatus(sessionId)
@@ -174,8 +177,14 @@ class ChatViewModel(
         viewModelScope.launch {
             val result = repository.testConnection()
             if (result is NetworkResult.Success) {
-                val loaded = result.data.filter { m -> m.isLoaded }
-                _uiState.update { it.copy(loadedModels = loaded) }
+                val allModels = result.data
+                val loaded = allModels.filter { m -> m.isLoaded }
+                _uiState.update { 
+                    it.copy(
+                        loadedModels = loaded,
+                        availableModels = allModels
+                    ) 
+                }
 
                 // If the current saved model is the default "local-model" placeholder,
                 // automatically update it to the first loaded model to prevent 404 errors.
@@ -197,12 +206,24 @@ class ChatViewModel(
                     }
                 }
             }
+        }
+    }
 
-            // Fetch Gemini Cloud Models dynamically
-            val geminiResult = repository.fetchGeminiModels()
-            if (geminiResult is NetworkResult.Success) {
-                _uiState.update { it.copy(geminiModels = geminiResult.data) }
-            }
+    fun loadModel(modelId: String) {
+        _uiState.update { it.copy(isModelActionLoading = true) }
+        viewModelScope.launch {
+            repository.loadModel(modelId)
+            _uiState.update { it.copy(isModelActionLoading = false) }
+            fetchLoadedModels()
+        }
+    }
+
+    fun unloadModel(modelId: String) {
+        _uiState.update { it.copy(isModelActionLoading = true) }
+        viewModelScope.launch {
+            repository.unloadModel(modelId)
+            _uiState.update { it.copy(isModelActionLoading = false) }
+            fetchLoadedModels()
         }
     }
 
@@ -215,7 +236,14 @@ class ChatViewModel(
                 ?: defaultModel
             val newSession = repository.createNewSession(title = title, modelName = model)
             pendingActiveSessionId = newSession.id
-            _uiState.update { it.copy(activeSession = newSession, errorMessage = null) }
+            // Client-side search tool is supported for local endpoints when globe state is active,
+            // so we don't force web-search toggle off for local models anymore.
+            _uiState.update { state ->
+                state.copy(
+                    activeSession = newSession,
+                    errorMessage = null
+                )
+            }
             observeMessagesForSession(newSession.id)
         }
     }
@@ -226,6 +254,8 @@ class ChatViewModel(
             val updatedSession = session.copy(modelName = modelId)
             repository.updateSession(updatedSession)
             
+            // Client-side search tool is supported for local endpoints when globe state is active,
+            // so we don't force web-search toggle off when switching to local models.
             _uiState.update { state ->
                 val updatedList = state.sessions.map { if (it.id == sessionId) updatedSession else it }
                 state.copy(
